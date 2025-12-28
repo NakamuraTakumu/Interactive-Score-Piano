@@ -1,0 +1,32 @@
+{
+  "name": "gemini_piano",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^7.3.6",
+    "@mui/material": "^7.3.6",
+    "@vitejs/plugin-react": "^5.1.2",
+    "opensheetmusicdisplay": "^1.9.3",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "tonal": "^6.4.2",
+    "tone": "^15.1.22",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3"
+  }
+}
