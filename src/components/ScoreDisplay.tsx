@@ -17,12 +17,13 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ data }) => {
 
   useEffect(() => {
     if (!containerRef.current) return;
-    osmdRef.current = new OpenSheetMusicDisplay(containerRef.current, {
+    const osmd = new OpenSheetMusicDisplay(containerRef.current, {
       autoResize: true,
       backend: 'svg',
       drawTitle: false,
       drawPartNames: false,
     });
+    osmdRef.current = osmd;
   }, []);
 
   useEffect(() => {
@@ -57,9 +58,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ data }) => {
         {activeNotes.size > 0 && contexts.map((ctx, i) => (
           Array.from(activeNotes).map(note => {
             const y = calculateYForMidi(note, ctx, ppu);
-            const isInScale = isDiatonic(note, ctx.keySig);
-            
-            // 小節を分離して見せるためのマージン (左右2pxずつ)
+            const diatonic = isDiatonic(note, ctx.keySig);
             const margin = 2;
 
             return (
@@ -69,9 +68,9 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ data }) => {
                 y1={y}
                 x2={ctx.x + ctx.width - margin}
                 y2={y}
-                stroke={isInScale ? "red" : "#2196f3"} // 調内なら赤、臨時記号なら青
+                stroke={diatonic ? "red" : "#2196f3"}
                 strokeWidth="3"
-                strokeDasharray={isInScale ? "none" : "4 2"} // 臨時記号なら点線
+                strokeDasharray={diatonic ? "none" : "4 2"}
                 opacity="0.8"
               />
             );

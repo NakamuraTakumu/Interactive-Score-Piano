@@ -13,6 +13,7 @@ const theme = createTheme({
   },
 })
 
+// 大譜表（ト音・ヘ音）かつ調が変化するテスト用 MusicXML
 const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="3.1">
@@ -20,25 +21,26 @@ const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <score-part id="P1"><part-name>Piano</part-name></score-part>
   </part-list>
   <part id="P1">
-    <measure number="1"><attributes><divisions>1</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes></measure>
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <staves>2</staves>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+        <clef number="2"><sign>F</sign><line>4</line></clef>
+      </attributes>
+    </measure>
     <measure number="2"><attributes><key><fifths>1</fifths></key></attributes></measure>
     <measure number="3"><attributes><key><fifths>2</fifths></key></attributes></measure>
-    <measure number="4"><attributes><key><fifths>3</fifths></key></attributes></measure>
-    <measure number="5"><attributes><key><fifths>4</fifths></key></attributes></measure>
-    <measure number="6"><attributes><key><fifths>5</fifths></key></attributes></measure>
-    <measure number="7"><attributes><key><fifths>6</fifths></key></attributes></measure>
-    <measure number="8"><attributes><key><fifths>-1</fifths></key></attributes></measure>
-    <measure number="9"><attributes><key><fifths>-2</fifths></key></attributes></measure>
-    <measure number="10"><attributes><key><fifths>-3</fifths></key></attributes></measure>
-    <measure number="11"><attributes><key><fifths>-4</fifths></key></attributes></measure>
-    <measure number="12"><attributes><key><fifths>-5</fifths></key></attributes></measure>
+    <measure number="4"><attributes><key><fifths>-1</fifths></key></attributes></measure>
   </part>
 </score-partwise>`;
 
 function App() {
   const activeNotes = useMidi();
   const [scoreData, setScoreData] = useState<string>(sampleMusicXML);
-  const [fileName, setFileName] = useState<string>('12_keys_test.xml');
+  const [fileName, setFileName] = useState<string>('grand_staff_test.xml');
 
   const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
