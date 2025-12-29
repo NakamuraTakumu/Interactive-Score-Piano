@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { useMidi } from '../hooks/useMidi';
 import { MeasureContext } from '../types/piano';
@@ -6,9 +6,10 @@ import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic 
 
 interface ScoreDisplayProps {
   data: string;
+  showAllLines?: boolean;
 }
 
-const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ data }) => {
+const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ data, showAllLines = false }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const [contexts, setContexts] = useState<MeasureContext[]>([]);
@@ -18,7 +19,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ data }) => {
   useEffect(() => {
     if (!containerRef.current) return;
     const osmd = new OpenSheetMusicDisplay(containerRef.current, {
-      autoResize: true,
+      autoResize: false,
       backend: 'svg',
       drawTitle: false,
       drawPartNames: false,
@@ -46,6 +47,84 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ data }) => {
     update();
   }, [data]);
 
+  useEffect(() => {
+    if (!containerRef.current || !osmdRef.current) return;
+
+    const handleResize = () => {
+      const osmd = osmdRef.current;
+      if (!osmd || !osmd.Sheet) return;
+
+      osmd.render();
+      const pixelPerUnit = getPixelPerUnit(osmd, containerRef.current!);
+      const ctxs = extractMeasureContexts(osmd, pixelPerUnit);
+      setPpu(pixelPerUnit);
+      setContexts(ctxs);
+    };
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0) {
+           handleResize();
+        }
+      }
+    });
+
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  // コンテキストごとに独立して表示判定を行う
+  const renderLines = useMemo(() => {
+    if (activeNotes.size === 0) return null;
+
+    const lines: React.JSX.Element[] = [];
+
+    contexts.forEach((ctx, i) => {
+      // 判定範囲の決定
+      let minLimit = -1;
+      let maxLimit = 1000;
+
+      if (ctx.minMidi !== null && ctx.maxMidi !== null) {
+        // 音符がある場合: 音域 + マージン
+        const margin = 2;
+        minLimit = ctx.minMidi - margin;
+        maxLimit = ctx.maxMidi + margin;
+      } else {
+        // 音符がない場合: 音部記号によるデフォルト範囲
+        if (ctx.clefType === 'G') {
+          minLimit = 55; // G3付近から上
+        } else if (ctx.clefType === 'F') {
+          maxLimit = 65; // F4付近から下
+        }
+      }
+
+      Array.from(activeNotes).forEach(note => {
+        // showAllLines が true の場合は範囲チェックをスキップ
+        if (showAllLines || (note >= minLimit && note <= maxLimit)) {
+          const y = calculateYForMidi(note, ctx, ppu);
+          const diatonic = isDiatonic(note, ctx.keySig);
+          const margin = 2;
+
+          lines.push(
+            <line
+              key={`${ctx.systemId}-${ctx.measureNumber}-${ctx.staffId}-${note}`}
+              x1={ctx.x + margin}
+              y1={y}
+              x2={ctx.x + ctx.width - margin}
+              y2={y}
+              stroke={diatonic ? "red" : "#2196f3"}
+              strokeWidth="3"
+              strokeDasharray={diatonic ? "none" : "4 2"}
+              opacity="0.8"
+            />
+          );
+        }
+      });
+    });
+
+    return lines;
+  }, [activeNotes, contexts, ppu, showAllLines]);
+
   return (
     <div style={{ position: 'relative', width: '100%', backgroundColor: '#fff' }}>
       <div ref={containerRef} style={{ width: '100%' }} />
@@ -55,27 +134,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ data }) => {
           pointerEvents: 'none', overflow: 'visible'
         }}
       >
-        {activeNotes.size > 0 && contexts.map((ctx, i) => (
-          Array.from(activeNotes).map(note => {
-            const y = calculateYForMidi(note, ctx, ppu);
-            const diatonic = isDiatonic(note, ctx.keySig);
-            const margin = 2;
-
-            return (
-              <line
-                key={`${i}-${note}`}
-                x1={ctx.x + margin}
-                y1={y}
-                x2={ctx.x + ctx.width - margin}
-                y2={y}
-                stroke={diatonic ? "red" : "#2196f3"}
-                strokeWidth="3"
-                strokeDasharray={diatonic ? "none" : "4 2"}
-                opacity="0.8"
-              />
-            );
-          })
-        ))}
+        {renderLines}
       </svg>
     </div>
   );

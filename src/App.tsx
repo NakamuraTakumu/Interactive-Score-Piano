@@ -1,5 +1,5 @@
 import { useState, ChangeEvent } from 'react'
-import { Box, Container, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Chip, Stack, Button, IconButton, Tooltip, Slider } from '@mui/material'
+import { Box, Container, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Chip, Stack, Button, IconButton, Tooltip, Slider, Switch, FormControlLabel } from '@mui/material'
 import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
@@ -16,7 +16,7 @@ const theme = createTheme({
   },
 })
 
-// 大譜表（ト音・ヘ音）かつ調が変化するテスト用 MusicXML
+// 両方ト音記号 & 8va テスト用 MusicXML
 const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="3.1">
@@ -31,12 +31,34 @@ const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
         <time><beats>4</beats><beat-type>4</beat-type></time>
         <staves>2</staves>
         <clef number="1"><sign>G</sign><line>2</line></clef>
-        <clef number="2"><sign>F</sign><line>4</line></clef>
+        <clef number="2"><sign>G</sign><line>2</line></clef>
       </attributes>
+      <direction placement="above">
+        <direction-type>
+          <octave-shift type="down" size="8" number="1" default-y="20"/>
+        </direction-type>
+      </direction>
+      <note>
+        <pitch><step>C</step><octave>5</octave></pitch>
+        <duration>4</duration>
+        <voice>1</voice>
+        <type>whole</type>
+        <staff>1</staff>
+      </note>
+      <direction>
+        <direction-type>
+          <octave-shift type="stop" size="8" number="1"/>
+        </direction-type>
+      </direction>
+      <backup><duration>4</duration></backup>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <voice>5</voice>
+        <type>whole</type>
+        <staff>2</staff>
+      </note>
     </measure>
-    <measure number="2"><attributes><key><fifths>1</fifths></key></attributes></measure>
-    <measure number="3"><attributes><key><fifths>2</fifths></key></attributes></measure>
-    <measure number="4"><attributes><key><fifths>-1</fifths></key></attributes></measure>
   </part>
 </score-partwise>`;
 
@@ -45,6 +67,7 @@ function App() {
   const { isAudioStarted, startAudio, volume, setVolume } = usePianoSound();
   const [scoreData, setScoreData] = useState<string>(sampleMusicXML);
   const [fileName, setFileName] = useState<string>('grand_staff_test.xml');
+  const [showAllLines, setShowAllLines] = useState<boolean>(false);
 
   const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -104,21 +127,27 @@ function App() {
                 </Button>
               </Stack>
             </Paper>
-            <Paper sx={{ p: 2, bgcolor: '#f5f5f5' }}>
-              <Typography variant="subtitle2" color="textSecondary" gutterBottom>MIDI入力ステータス:</Typography>
-              <Stack direction="row" spacing={1}>
-                {activeNotes.size === 0 ? (
-                  <Typography variant="body2" color="textSecondary italic">鍵盤を弾いてください...</Typography>
-                ) : (
-                  Array.from(activeNotes).sort((a, b) => a - b).map(note => (
-                    <Chip key={note} label={`Note: ${note}`} color="primary" variant="outlined" />
-                  ))
-                )}
-              </Stack>
+            <Paper sx={{ p: 2, bgcolor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Box>
+                <Typography variant="subtitle2" color="textSecondary" gutterBottom>MIDI入力ステータス:</Typography>
+                <Stack direction="row" spacing={1}>
+                  {activeNotes.size === 0 ? (
+                    <Typography variant="body2" color="textSecondary italic">鍵盤を弾いてください...</Typography>
+                  ) : (
+                    Array.from(activeNotes).sort((a, b) => a - b).map(note => (
+                      <Chip key={note} label={`Note: ${note}`} color="primary" variant="outlined" />
+                    ))
+                  )}
+                </Stack>
+              </Box>
+              <FormControlLabel
+                control={<Switch checked={showAllLines} onChange={(e) => setShowAllLines(e.target.checked)} />}
+                label="すべての補助線を表示"
+              />
             </Paper>
           </Stack>
           <Paper elevation={3} sx={{ p: 2, minHeight: '600px' }}>
-            <ScoreDisplay data={scoreData} />
+            <ScoreDisplay data={scoreData} showAllLines={showAllLines} />
           </Paper>
         </Box>
       </Container>
