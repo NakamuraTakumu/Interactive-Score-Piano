@@ -1,8 +1,11 @@
 import { useState, ChangeEvent } from 'react'
-import { Box, Container, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Chip, Stack, Button } from '@mui/material'
+import { Box, Container, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Chip, Stack, Button, IconButton, Tooltip, Slider } from '@mui/material'
 import CloudUploadIcon from '@mui/icons-material/CloudUpload'
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
+import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import ScoreDisplay from './components/ScoreDisplay'
 import { useMidi } from './hooks/useMidi'
+import { usePianoSound } from './hooks/usePianoSound'
 
 const theme = createTheme({
   palette: {
@@ -39,6 +42,7 @@ const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 
 function App() {
   const activeNotes = useMidi();
+  const { isAudioStarted, startAudio, volume, setVolume } = usePianoSound();
   const [scoreData, setScoreData] = useState<string>(sampleMusicXML);
   const [fileName, setFileName] = useState<string>('grand_staff_test.xml');
 
@@ -54,6 +58,10 @@ function App() {
     reader.readAsBinaryString(file);
   };
 
+  const handleVolumeChange = (_event: Event, newValue: number | number[]) => {
+    setVolume(newValue as number);
+  };
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -67,10 +75,34 @@ function App() {
               <Box>
                 <Typography variant="subtitle1">現在のファイル: <strong>{fileName}</strong></Typography>
               </Box>
-              <Button variant="contained" component="label" startIcon={<CloudUploadIcon />}>
-                MXL / XML 読み込み
-                <input type="file" hidden accept=".mxl,.xml,.musicxml" onChange={handleFileUpload} />
-              </Button>
+              <Stack direction="row" spacing={2} alignItems="center">
+                <Box sx={{ width: 150, display: 'flex', alignItems: 'center', mr: 2 }}>
+                  <VolumeUpIcon sx={{ mr: 1, color: 'text.secondary' }} />
+                  <Slider 
+                    aria-label="Volume" 
+                    value={volume} 
+                    onChange={handleVolumeChange} 
+                    min={-60} 
+                    max={10} 
+                    disabled={!isAudioStarted}
+                  />
+                </Box>
+                <Tooltip title={isAudioStarted ? "音声出力有効" : "クリックして音声を有効化"}>
+                  <Button 
+                    variant={isAudioStarted ? "outlined" : "contained"} 
+                    color={isAudioStarted ? "success" : "warning"}
+                    onClick={startAudio}
+                    startIcon={isAudioStarted ? <VolumeUpIcon /> : <VolumeOffIcon />}
+                    disabled={isAudioStarted}
+                  >
+                    {isAudioStarted ? "Sound ON" : "Enable Sound"}
+                  </Button>
+                </Tooltip>
+                <Button variant="contained" component="label" startIcon={<CloudUploadIcon />}>
+                  MXL / XML 読み込み
+                  <input type="file" hidden accept=".mxl,.xml,.musicxml" onChange={handleFileUpload} />
+                </Button>
+              </Stack>
             </Paper>
             <Paper sx={{ p: 2, bgcolor: '#f5f5f5' }}>
               <Typography variant="subtitle2" color="textSecondary" gutterBottom>MIDI入力ステータス:</Typography>
