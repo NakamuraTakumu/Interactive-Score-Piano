@@ -14,4 +14,8 @@ export interface MeasureContext {
   minMidi: number | null;
   maxMidi: number | null;
   octaveShift: number; // 視覚的な高さ補正（半音単位）。8vaなら-12
+  noteDetails: {
+    midi: number;
+    graphicalNote: any; // GraphicalNote
+  }[];
 }

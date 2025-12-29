@@ -73,6 +73,24 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ data, showAllLines = false 
     return () => resizeObserver.disconnect();
   }, []);
 
+  // MIDI入力に応じて音符の色をリアルタイムで更新
+  useEffect(() => {
+    if (contexts.length === 0) return;
+
+    contexts.forEach(ctx => {
+      ctx.noteDetails.forEach(detail => {
+        const isActive = activeNotes.has(detail.midi);
+        const color = isActive ? '#ff0000' : '#000000';
+        
+        // OSMD の GraphicalNote オブジェクトの setColor メソッドを呼び出す
+        // これにより SVG 要素の色が直接書き換わる
+        if (detail.graphicalNote && typeof detail.graphicalNote.setColor === 'function') {
+          detail.graphicalNote.setColor(color);
+        }
+      });
+    });
+  }, [activeNotes, contexts]);
+
   // コンテキストごとに独立して表示判定を行う
   const renderLines = useMemo(() => {
     if (activeNotes.size === 0) return null;

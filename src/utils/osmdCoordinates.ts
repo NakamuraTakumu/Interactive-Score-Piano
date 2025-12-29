@@ -70,6 +70,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
 
           let minMidi: number | null = null;
           let maxMidi: number | null = null;
+          const noteDetails: { midi: number, graphicalNote: any }[] = [];
 
           // 音符の解析
           measure.staffEntries.forEach(entry => {
@@ -80,6 +81,15 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
                     const soundingMidi = baseMidi;
                     if (minMidi === null || soundingMidi < minMidi) minMidi = soundingMidi;
                     if (maxMidi === null || soundingMidi > maxMidi) maxMidi = soundingMidi;
+
+                    // この小節内の音符として記録
+                    const graphicalNote = osmd.EngravingRules.GNote(note);
+                    if (graphicalNote) {
+                      noteDetails.push({
+                        midi: soundingMidi,
+                        graphicalNote: graphicalNote
+                      });
+                    }
                   }
                 });
             });
@@ -102,7 +112,8 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
             keySig: state.key,
             minMidi,
             maxMidi,
-            octaveShift: state.octaveShift
+            octaveShift: state.octaveShift,
+            noteDetails // 追加
           });
 
           if (endShiftAfterThisMeasure) {

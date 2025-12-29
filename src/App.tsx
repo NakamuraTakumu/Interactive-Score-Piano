@@ -127,20 +127,23 @@ function App() {
                 </Button>
               </Stack>
             </Paper>
-            <Paper sx={{ p: 2, bgcolor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Box>
+            <Paper sx={{ p: 2, bgcolor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '100px' }}>
+              <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
                 <Typography variant="subtitle2" color="textSecondary" gutterBottom>MIDI入力ステータス:</Typography>
-                <Stack direction="row" spacing={1}>
-                  {activeNotes.size === 0 ? (
-                    <Typography variant="body2" color="textSecondary italic">鍵盤を弾いてください...</Typography>
-                  ) : (
-                    Array.from(activeNotes).sort((a, b) => a - b).map(note => (
-                      <Chip key={note} label={`Note: ${note}`} color="primary" variant="outlined" />
-                    ))
-                  )}
-                </Stack>
+                <Box sx={{ overflowX: 'auto', pb: 1 }}>
+                  <Stack direction="row" spacing={1} sx={{ minWidth: 'min-content' }}>
+                    {activeNotes.size === 0 ? (
+                      <Typography variant="body2" color="textSecondary italic">鍵盤を弾いてください...</Typography>
+                    ) : (
+                      Array.from(activeNotes).sort((a, b) => a - b).map(note => (
+                        <Chip key={note} label={`Note: ${note}`} color="primary" variant="outlined" size="small" />
+                      ))
+                    )}
+                  </Stack>
+                </Box>
               </Box>
               <FormControlLabel
+                sx={{ ml: 2, whiteSpace: 'nowrap' }}
                 control={<Switch checked={showAllLines} onChange={(e) => setShowAllLines(e.target.checked)} />}
                 label="すべての補助線を表示"
               />
