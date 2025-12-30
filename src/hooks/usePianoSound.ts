@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import * as Tone from 'tone';
 
 /**
@@ -19,6 +19,13 @@ export const usePianoSound = () => {
       console.error('Failed to start audio context:', error);
     }
   };
+
+  // 指定した音を鳴らす関数（外部用）
+  const playNotes = useCallback((midiNotes: number[], duration: string = "4n") => {
+    if (!synthRef.current || !isAudioStarted) return;
+    const frequencies = midiNotes.map(note => Tone.Frequency(note, "midi").toFrequency());
+    synthRef.current.triggerAttackRelease(frequencies, duration);
+  }, [isAudioStarted]);
 
   // シンセサイザーの初期化
   useEffect(() => {
@@ -87,8 +94,6 @@ export const usePianoSound = () => {
     return () => {
       if (synthRef.current) {
         synthRef.current.releaseAll();
-
-
       }
     };
   }, []);
@@ -97,6 +102,7 @@ export const usePianoSound = () => {
     isAudioStarted,
     startAudio,
     volume,
-    setVolume
+    setVolume,
+    playNotes
   };
 };

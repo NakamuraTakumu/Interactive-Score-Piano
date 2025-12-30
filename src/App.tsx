@@ -142,7 +142,7 @@ const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 
 function App() {
   const activeNotes = useMidi();
-  const { isAudioStarted, startAudio, volume, setVolume } = usePianoSound();
+  const { isAudioStarted, startAudio, volume, setVolume, playNotes } = usePianoSound();
   const [scoreData, setScoreData] = useState<string>(sampleMusicXML);
   const [fileName, setFileName] = useState<string>('grand_staff_test.xml');
   const [showAllLines, setShowAllLines] = useState<boolean>(false);
@@ -172,9 +172,21 @@ function App() {
   };
 
   const handleMeasureClick = (measure: MeasureContext, midiNotes: Set<number>, noteX: number | null) => {
-    setSelectedMeasure(measure);
-    setSelectedMidiNotes(midiNotes);
-    setSelectedNoteX(noteX);
+    // 選択内容が実際に変化した場合のみ処理
+    const isNewSelection = noteX !== selectedNoteX || 
+                           midiNotes.size !== selectedMidiNotes.size ||
+                           Array.from(midiNotes).some(n => !selectedMidiNotes.has(n));
+
+    if (isNewSelection) {
+      setSelectedMeasure(measure);
+      setSelectedMidiNotes(midiNotes);
+      setSelectedNoteX(noteX);
+
+      // 音を鳴らす
+      if (midiNotes.size > 0 && isAudioStarted) {
+        playNotes(Array.from(midiNotes));
+      }
+    }
   };
 
   return (

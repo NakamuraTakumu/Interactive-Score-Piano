@@ -33,17 +33,21 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     const rect = containerRef.current.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+    
+    // ホバー状態の更新
     const measure = getMeasureAtPoint(x, y, contexts);
     if (measure !== hoveredMeasure) setHoveredMeasure(measure);
+
+    // ドラッグ中（左ボタン押し下げ）であれば選択処理を実行
+    if (event.buttons === 1 && onMeasureClick) {
+      updateSelectionAtPoint(x, y);
+    }
   };
 
   const handleMouseLeave = () => setHoveredMeasure(null);
 
-  const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!containerRef.current || contexts.length === 0 || !onMeasureClick) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+  const updateSelectionAtPoint = (x: number, y: number) => {
+    if (!onMeasureClick) return;
     const clickedMeasure = getMeasureAtPoint(x, y, contexts);
     
     if (clickedMeasure) {
@@ -73,6 +77,14 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       
       onMeasureClick(clickedMeasure, targetMidiNotes, closestX);
     }
+  };
+
+  const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!containerRef.current || contexts.length === 0) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    updateSelectionAtPoint(x, y);
   };
 
   useEffect(() => {
