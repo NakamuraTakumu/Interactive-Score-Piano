@@ -30,68 +30,55 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
           let endShiftAfterThisMeasure = false;
           
           if (source && staffIdx >= 0) {
-            // Key / Clef の更新
             if (source.FirstInstructionsStaffEntries?.[staffIdx]) {
                 source.FirstInstructionsStaffEntries[staffIdx].Instructions.forEach(instr => {
-                  if (instr instanceof KeyInstruction) {
-                    state.key = instr.Key;
-                  } else if (instr instanceof ClefInstruction) {
+                  if (instr instanceof KeyInstruction) state.key = instr.Key;
+                  else if (instr instanceof ClefInstruction) {
                     const c = instr.ClefType.toString();
                     state.clef = (c.includes('1') || c.includes('F')) ? 'F' : 'G';
                   }
                 });
             }
-            
-            // OctaveShift の更新 (StaffLinkedExpressions)
             if (source.StaffLinkedExpressions?.[staffIdx]) {
                 source.StaffLinkedExpressions[staffIdx].forEach(expr => {
                     // @ts-ignore
                     const start = expr.octaveShiftStart;
                     if (start) {
-                        // OSMD OctaveEnum: 0=VA8, 1=VB8, 2=MA15, 3=MB15
                         // @ts-ignore
                         const val = start.octaveValue;
-                        
                         let shift = 0;
-                        if (val === 0) shift = -12;      // 8va: 記譜は実音より1オクターブ下
-                        else if (val === 1) shift = 12;  // 8vb: 記譜は実音より1オクターブ上
-                        else if (val === 2) shift = -24; // 15ma
-                        else if (val === 3) shift = 24;  // 15mb
-                        
+                        if (val === 0) shift = -12;
+                        else if (val === 1) shift = 12;
+                        else if (val === 2) shift = -24;
+                        else if (val === 3) shift = 24;
                         state.octaveShift = shift;
                     }
                     // @ts-ignore
-                    if (expr.octaveShiftEnd) {
-                        endShiftAfterThisMeasure = true;
-                    }
+                    if (expr.octaveShiftEnd) endShiftAfterThisMeasure = true;
                 });
             }
           }
 
           let minMidi: number | null = null;
           let maxMidi: number | null = null;
-          const noteDetails: { midi: number, graphicalNote: any }[] = [];
+          const noteDetails: { midi: number, x: number, graphicalNote: any }[] = [];
 
-          // 音符の解析
-          measure.staffEntries.forEach(entry => {
-            entry.sourceStaffEntry.VoiceEntries.forEach(ve => {
-                ve.Notes.forEach(note => {
-                  if (note.Pitch) {
-                    const baseMidi = note.Pitch.getHalfTone() + 12;
-                    const soundingMidi = baseMidi;
-                    if (minMidi === null || soundingMidi < minMidi) minMidi = soundingMidi;
-                    if (maxMidi === null || soundingMidi > maxMidi) maxMidi = soundingMidi;
+          measure.staffEntries.forEach(gse => {
+            const entryX = gse.PositionAndShape.AbsolutePosition.x * pixelPerUnit;
+            gse.graphicalVoiceEntries.forEach(gve => {
+              gve.notes.forEach((gn) => {
+                if (gn.sourceNote && gn.sourceNote.Pitch) {
+                  const soundingMidi = gn.sourceNote.Pitch.getHalfTone() + 12;
+                  if (minMidi === null || soundingMidi < minMidi) minMidi = soundingMidi;
+                  if (maxMidi === null || soundingMidi > maxMidi) maxMidi = soundingMidi;
 
-                    // この小節内の音符として記録
-                    const graphicalNote = osmd.EngravingRules.GNote(note);
-                    if (graphicalNote) {
-                      noteDetails.push({
-                        midi: soundingMidi,
-                        graphicalNote: graphicalNote
-                      });
-                    }
-                  }
-                });
+                  noteDetails.push({
+                    midi: soundingMidi,
+                    x: entryX,
+                    graphicalNote: gn
+                  });
+                }
+              });
             });
           });
 
@@ -106,19 +93,17 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
             x: absMeasurePos.x * pixelPerUnit,
             y: absMeasurePos.y * pixelPerUnit,
             width: measureSize.width * pixelPerUnit,
-            height: measureSize.height * pixelPerUnit,
+            height: 4 * pixelPerUnit,
             staffY: absStaffPos.y * pixelPerUnit,
             clefType: state.clef as ClefType,
             keySig: state.key,
             minMidi,
             maxMidi,
             octaveShift: state.octaveShift,
-            noteDetails // 追加
+            noteDetails
           });
 
-          if (endShiftAfterThisMeasure) {
-              state.octaveShift = 0;
-          }
+          if (endShiftAfterThisMeasure) state.octaveShift = 0;
         });
       });
     });
@@ -127,11 +112,13 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
   return contexts;
 };
 
+export const getMeasureAtPoint = (x: number, y: number, contexts: MeasureContext[]): MeasureContext | null => {
+  return contexts.find(ctx => x >= ctx.x && x <= ctx.x + ctx.width && y >= ctx.y && y <= ctx.y + ctx.height) || null;
+};
+
 export const calculateYForMidi = (midi: number, ctx: MeasureContext, ppu: number): number => {
   const space = ppu / 2;
-  // 実音(midi)に octaveShift (-12など) を加えて記譜上の高さに変換
   const displayMidi = midi + ctx.octaveShift;
-  
   const pc = ((displayMidi % 12) + 12) % 12;
   const octave = Math.floor(displayMidi / 12);
   const stepMap = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];

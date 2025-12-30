@@ -16,6 +16,7 @@ export interface MeasureContext {
   octaveShift: number; // 視覚的な高さ補正（半音単位）。8vaなら-12
   noteDetails: {
     midi: number;
+    x: number; // 音符の横位置（ピクセル）
     graphicalNote: any; // GraphicalNote
   }[];
 }

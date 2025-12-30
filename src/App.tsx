@@ -4,8 +4,10 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import ScoreDisplay from './components/ScoreDisplay'
+import PianoKeyboard from './components/PianoKeyboard'
 import { useMidi } from './hooks/useMidi'
 import { usePianoSound } from './hooks/usePianoSound'
+import { MeasureContext } from './types/piano'
 
 const theme = createTheme({
   palette: {
@@ -16,7 +18,7 @@ const theme = createTheme({
   },
 })
 
-// 両方ト音記号 & 8va テスト用 MusicXML
+// 複雑な調の変化と和音（Chord）を含むテスト用 MusicXML
 const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="3.1">
@@ -24,39 +26,115 @@ const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <score-part id="P1"><part-name>Piano</part-name></score-part>
   </part-list>
   <part id="P1">
+    <!-- Measure 1: C Major - Single Notes -->
     <measure number="1">
       <attributes>
         <divisions>1</divisions>
         <key><fifths>0</fifths></key>
         <time><beats>4</beats><beat-type>4</beat-type></time>
-        <staves>2</staves>
-        <clef number="1"><sign>G</sign><line>2</line></clef>
-        <clef number="2"><sign>G</sign><line>2</line></clef>
+        <clef><sign>G</sign><line>2</line></clef>
       </attributes>
-      <direction placement="above">
-        <direction-type>
-          <octave-shift type="down" size="8" number="1" default-y="20"/>
-        </direction-type>
-      </direction>
-      <note>
-        <pitch><step>C</step><octave>5</octave></pitch>
-        <duration>4</duration>
-        <voice>1</voice>
-        <type>whole</type>
-        <staff>1</staff>
-      </note>
-      <direction>
-        <direction-type>
-          <octave-shift type="stop" size="8" number="1"/>
-        </direction-type>
-      </direction>
-      <backup><duration>4</duration></backup>
       <note>
         <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>half</type>
+      </note>
+      <note>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>half</type>
+      </note>
+    </measure>
+    <!-- Measure 2: G Major - Chord (G, B, D) -->
+    <measure number="2">
+      <attributes>
+        <key><fifths>1</fifths></key>
+      </attributes>
+      <note>
+        <pitch><step>G</step><octave>4</octave></pitch>
         <duration>4</duration>
-        <voice>5</voice>
         <type>whole</type>
-        <staff>2</staff>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>B</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>D</step><octave>5</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+    </measure>
+    <!-- Measure 3: Eb Major - Chord (Eb, G, Bb) -->
+    <measure number="3">
+      <attributes>
+        <key><fifths>-3</fifths></key>
+      </attributes>
+      <note>
+        <pitch><step>E</step><alter>-1</alter><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>G</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>B</step><alter>-1</alter><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+    </measure>
+    <!-- Measure 4: F# Major - Chord (F#, A#, C#) -->
+    <measure number="4">
+      <attributes>
+        <key><fifths>6</fifths></key>
+      </attributes>
+      <note>
+        <pitch><step>F</step><alter>1</alter><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>A</step><alter>1</alter><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>C</step><alter>1</alter><octave>5</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+    </measure>
+    <!-- Measure 5: C Major - Cluster -->
+    <measure number="5">
+      <attributes>
+        <key><fifths>0</fifths></key>
+      </attributes>
+      <note>
+        <pitch><step>F</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>G</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>A</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
       </note>
     </measure>
   </part>
@@ -68,6 +146,9 @@ function App() {
   const [scoreData, setScoreData] = useState<string>(sampleMusicXML);
   const [fileName, setFileName] = useState<string>('grand_staff_test.xml');
   const [showAllLines, setShowAllLines] = useState<boolean>(false);
+  const [selectedMeasure, setSelectedMeasure] = useState<MeasureContext | null>(null);
+  const [selectedMidiNotes, setSelectedMidiNotes] = useState<Set<number>>(new Set());
+  const [selectedNoteX, setSelectedNoteX] = useState<number | null>(null);
 
   const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -76,7 +157,12 @@ function App() {
     const reader = new FileReader();
     reader.onload = (e) => {
       const result = e.target?.result;
-      if (typeof result === 'string') setScoreData(result);
+      if (typeof result === 'string') {
+        setScoreData(result);
+        setSelectedMeasure(null);
+        setSelectedMidiNotes(new Set());
+        setSelectedNoteX(null);
+      }
     };
     reader.readAsBinaryString(file);
   };
@@ -85,75 +171,84 @@ function App() {
     setVolume(newValue as number);
   };
 
+  const handleMeasureClick = (measure: MeasureContext, midiNotes: Set<number>, noteX: number | null) => {
+    setSelectedMeasure(measure);
+    setSelectedMidiNotes(midiNotes);
+    setSelectedNoteX(noteX);
+  };
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Container maxWidth="lg">
-        <Box sx={{ my: 4 }}>
-          <Typography variant="h4" component="h1" gutterBottom align="center">
-            Gemini Piano Practice
-          </Typography>
-          <Stack spacing={2} sx={{ mb: 3 }}>
-            <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Box>
-                <Typography variant="subtitle1">現在のファイル: <strong>{fileName}</strong></Typography>
-              </Box>
-              <Stack direction="row" spacing={2} alignItems="center">
-                <Box sx={{ width: 150, display: 'flex', alignItems: 'center', mr: 2 }}>
-                  <VolumeUpIcon sx={{ mr: 1, color: 'text.secondary' }} />
-                  <Slider 
-                    aria-label="Volume" 
-                    value={volume} 
-                    onChange={handleVolumeChange} 
-                    min={-60} 
-                    max={10} 
-                    disabled={!isAudioStarted}
+      <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', pb: '140px' }}>
+        <Container maxWidth="lg">
+          <Box sx={{ my: 4 }}>
+            <Typography variant="h4" component="h1" gutterBottom align="center">
+              Gemini Piano Practice
+            </Typography>
+            <Stack spacing={2} sx={{ mb: 3 }}>
+              <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography variant="subtitle1">現在のファイル: <strong>{fileName}</strong></Typography>
+                </Box>
+                <Stack direction="row" spacing={2} alignItems="center">
+                  <FormControlLabel
+                    sx={{ mr: 2, whiteSpace: 'nowrap' }}
+                    control={<Switch checked={showAllLines} onChange={(e) => setShowAllLines(e.target.checked)} />}
+                    label="補助線すべて"
                   />
-                </Box>
-                <Tooltip title={isAudioStarted ? "音声出力有効" : "クリックして音声を有効化"}>
-                  <Button 
-                    variant={isAudioStarted ? "outlined" : "contained"} 
-                    color={isAudioStarted ? "success" : "warning"}
-                    onClick={startAudio}
-                    startIcon={isAudioStarted ? <VolumeUpIcon /> : <VolumeOffIcon />}
-                    disabled={isAudioStarted}
-                  >
-                    {isAudioStarted ? "Sound ON" : "Enable Sound"}
+                  <Box sx={{ width: 120, display: 'flex', alignItems: 'center', mr: 2 }}>
+                    <VolumeUpIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 20 }} />
+                    <Slider 
+                      size="small"
+                      aria-label="Volume" 
+                      value={volume} 
+                      onChange={handleVolumeChange} 
+                      min={-60} 
+                      max={10} 
+                      disabled={!isAudioStarted}
+                    />
+                  </Box>
+                  <Tooltip title={isAudioStarted ? "音声出力有効" : "クリックして音声を有効化"}>
+                    <Button 
+                      size="small"
+                      variant={isAudioStarted ? "outlined" : "contained"} 
+                      color={isAudioStarted ? "success" : "warning"}
+                      onClick={startAudio}
+                      startIcon={isAudioStarted ? <VolumeUpIcon /> : <VolumeOffIcon />}
+                      disabled={isAudioStarted}
+                    >
+                      {isAudioStarted ? "Sound ON" : "Sound"}
+                    </Button>
+                  </Tooltip>
+                  <Button size="small" variant="contained" component="label" startIcon={<CloudUploadIcon />}>
+                    Open
+                    <input type="file" hidden accept=".mxl,.xml,.musicxml" onChange={handleFileUpload} />
                   </Button>
-                </Tooltip>
-                <Button variant="contained" component="label" startIcon={<CloudUploadIcon />}>
-                  MXL / XML 読み込み
-                  <input type="file" hidden accept=".mxl,.xml,.musicxml" onChange={handleFileUpload} />
-                </Button>
-              </Stack>
-            </Paper>
-            <Paper sx={{ p: 2, bgcolor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '100px' }}>
-              <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
-                <Typography variant="subtitle2" color="textSecondary" gutterBottom>MIDI入力ステータス:</Typography>
-                <Box sx={{ overflowX: 'auto', pb: 1 }}>
-                  <Stack direction="row" spacing={1} sx={{ minWidth: 'min-content' }}>
-                    {activeNotes.size === 0 ? (
-                      <Typography variant="body2" color="textSecondary italic">鍵盤を弾いてください...</Typography>
-                    ) : (
-                      Array.from(activeNotes).sort((a, b) => a - b).map(note => (
-                        <Chip key={note} label={`Note: ${note}`} color="primary" variant="outlined" size="small" />
-                      ))
-                    )}
-                  </Stack>
-                </Box>
-              </Box>
-              <FormControlLabel
-                sx={{ ml: 2, whiteSpace: 'nowrap' }}
-                control={<Switch checked={showAllLines} onChange={(e) => setShowAllLines(e.target.checked)} />}
-                label="すべての補助線を表示"
+                </Stack>
+              </Paper>
+            </Stack>
+            <Paper elevation={3} sx={{ p: 2, minHeight: '600px' }}>
+              <ScoreDisplay 
+                data={scoreData} 
+                showAllLines={showAllLines} 
+                onMeasureClick={handleMeasureClick}
+                selectedMeasureNumber={selectedMeasure?.measureNumber}
+                selectedMidiNotes={selectedMidiNotes}
+                selectedNoteX={selectedNoteX}
               />
             </Paper>
-          </Stack>
-          <Paper elevation={3} sx={{ p: 2, minHeight: '600px' }}>
-            <ScoreDisplay data={scoreData} showAllLines={showAllLines} />
-          </Paper>
+          </Box>
+        </Container>
+        
+        <Box sx={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1100 }}>
+          <PianoKeyboard 
+            activeNotes={activeNotes} 
+            highlightNotes={selectedMidiNotes}
+            keySig={selectedMeasure?.keySig}
+          />
         </Box>
-      </Container>
+      </Box>
     </ThemeProvider>
   )
 }
