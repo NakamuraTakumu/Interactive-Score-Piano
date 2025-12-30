@@ -66,7 +66,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
           measure.staffEntries.forEach(gse => {
             const entryX = gse.PositionAndShape.AbsolutePosition.x * pixelPerUnit;
             gse.graphicalVoiceEntries.forEach(gve => {
-              gve.notes.forEach((gn) => {
+              gve.notes.forEach((gn, index) => {
                 if (gn.sourceNote && gn.sourceNote.Pitch) {
                   const soundingMidi = gn.sourceNote.Pitch.getHalfTone() + 12;
                   if (minMidi === null || soundingMidi < minMidi) minMidi = soundingMidi;
@@ -75,7 +75,9 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
                   noteDetails.push({
                     midi: soundingMidi,
                     x: entryX,
-                    graphicalNote: gn
+                    graphicalNote: gn,
+                    // @ts-ignore
+                    index: index
                   });
                 }
               });

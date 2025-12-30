@@ -13,9 +13,9 @@ interface ScoreDisplayProps {
   selectedNoteX?: number | null;
 }
 
-const ScoreDisplay: React.FC<ScoreDisplayProps> = ({ 
-  data, 
-  showAllLines = false, 
+const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
+  data,
+  showAllLines = false,
   onMeasureClick,
   selectedMeasureNumber = null,
   selectedMidiNotes = new Set(),
@@ -121,30 +121,78 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     return () => resizeObserver.disconnect();
   }, []);
 
-  // 音符の色を更新（シンプルな一括制御）
+  // 音符の色を更新
   useEffect(() => {
     if (contexts.length === 0) return;
     
     contexts.forEach(ctx => {
+      // GraphicalVoiceEntry (和音) ごとにグループ化
+      const gveMap = new Map<any, any[]>();
       ctx.noteDetails.forEach((detail: any) => {
-        const gn = detail.graphicalNote;
-        if (!gn || typeof gn.setColor !== 'function') return;
+        const gve = detail.graphicalNote.parentVoiceEntry;
+        if (!gveMap.has(gve)) gveMap.set(gve, []);
+        gveMap.get(gve)!.push(detail);
+      });
 
-        let color = '#000000';
-        if (activeNotes.has(detail.midi)) {
-          color = '#ff0000';
-        } else if (
-          selectedMeasureNumber === ctx.measureNumber && 
-          selectedNoteX !== null && 
-          Math.abs(detail.x - selectedNoteX) < 1
-        ) {
-          color = '#4caf50';
+      gveMap.forEach((details, gve) => {
+        const isSelected = selectedMeasureNumber === ctx.measureNumber && 
+                           selectedNoteX !== null && 
+                           details.some(d => Math.abs(d.x - selectedNoteX) < 1);
+
+        const defaultColor = isSelected ? '#4caf50' : '#000000';
+
+        // 1. VexFlow の StaveNote オブジェクトを取得
+        const vf = details[0]?.graphicalNote?.vfnote;
+        if (!vf) return;
+        const realVfNote = Array.isArray(vf) ? vf[0] : vf;
+
+        // 2. SVG グループ要素を取得
+        const gveSvgGroup = realVfNote.attrs?.el || realVfNote.el;
+
+        if (gveSvgGroup instanceof SVGElement) {
+          const setCol = (el: SVGElement, color: string) => {
+            el.setAttribute('fill', color);
+            el.setAttribute('stroke', color);
+            el.style.fill = color;
+            el.style.stroke = color;
+          };
+
+          // 全ての音が弾かれているか判定
+          const allActive = details.length > 0 && details.every((d: any) => activeNotes.has(d.midi));
+
+          if (allActive) {
+            // A. 全ての音が弾かれている場合：和音全体（符頭、ステム、連桁などすべて）を赤くする
+            gveSvgGroup.querySelectorAll('path, ellipse').forEach(el => setCol(el as SVGElement, '#ff0000'));
+          } else {
+            // B. 一部の音だけが弾かれている、または何も弾かれていない場合
+            // 1. まず全体をデフォルト色（黒または選択色の緑）にリセット
+            gveSvgGroup.querySelectorAll('path, ellipse').forEach(el => setCol(el as SVGElement, defaultColor));
+
+            // 2. 符頭要素（NoteHead）のみを特定して個別着色
+            const noteGroup = gveSvgGroup.querySelector('.vf-note');
+            if (noteGroup) {
+              const heads = Array.from(noteGroup.querySelectorAll('path, ellipse')).filter(el => 
+                !el.classList.contains('vf-stem')
+              );
+
+              details.forEach((detail: any) => {
+                let color = defaultColor;
+                if (activeNotes.has(detail.midi)) {
+                  color = '#ff0000';
+                } else if (isSelected && selectedMidiNotes.has(detail.midi)) {
+                  color = '#4caf50';
+                }
+
+                if (color !== defaultColor && heads.length > detail.index) {
+                  setCol(heads[detail.index] as SVGElement, color);
+                }
+              });
+            }
+          }
         }
-
-        gn.setColor(color);
       });
     });
-  }, [activeNotes, contexts, selectedMeasureNumber, selectedNoteX]);
+  }, [activeNotes, contexts, selectedMeasureNumber, selectedNoteX, selectedMidiNotes]);
 
   const renderLines = useMemo(() => {
     const lines: React.JSX.Element[] = [];
@@ -174,7 +222,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     <div style={{ position: 'relative', width: '100%', backgroundColor: '#fff', cursor: 'pointer' }} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} onClick={handleClick}>
       <div ref={containerRef} style={{ width: '100%' }} />
       <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}>
-        {hoveredMeasure && <rect x={hoveredMeasure.x} y={hoveredMeasure.y} width={hoveredMeasure.width} height={hoveredMeasure.height} fill="rgba(25, 118, 210, 0.05)" stroke="rgba(25, 118, 210, 0.1)" strokeWidth="1" />}
+        {hoveredMeasure && <rect x={hoveredMeasure.x} y={hoveredMeasure.y} width={hoveredMeasure.width} height={hoveredMeasure.height} fill="rgba(25, 118, 210, 0.05)" stroke="rgba(25, 118, 210, 0.1)" strokeWidth="1" />} 
         {renderLines}
       </svg>
     </div>
