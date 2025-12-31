@@ -9,16 +9,20 @@ export const getPixelPerUnit = (osmd: OpenSheetMusicDisplay, container: HTMLElem
 
 export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit: number): MeasureContext[] => {
   const graphicSheet = osmd.GraphicSheet;
-  if (!graphicSheet) return [];
+  if (!graphicSheet || !osmd.Sheet) return [];
   const contexts: MeasureContext[] = [];
   const staffStates = new Map<number, { clef: string, key: number, octaveShift: number }>();
+
+  // 高速化のため、Stavesのインデックスを事前にマップ化
+  const staffIndexMap = new Map<any, number>();
+  osmd.Sheet.Staves.forEach((s, i) => staffIndexMap.set(s, i));
 
   graphicSheet.MusicPages.forEach((page, pIdx) => {
     page.MusicSystems.forEach((system, sIdx) => {
       system.StaffLines.forEach(staffLine => {
         const parentStaff = staffLine.ParentStaff;
         const staffId = parentStaff.idInMusicSheet;
-        const staffIdx = osmd.Sheet.Staves.indexOf(parentStaff);
+        const staffIdx = staffIndexMap.get(parentStaff) ?? -1;
 
         if (!staffStates.has(staffId)) {
           staffStates.set(staffId, { clef: (staffId % 2 !== 0) ? 'F' : 'G', key: 0, octaveShift: 0 });
@@ -61,7 +65,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
 
           let minMidi: number | null = null;
           let maxMidi: number | null = null;
-          const noteDetails: { midi: number, x: number, graphicalNote: any }[] = [];
+          const noteDetails: { midi: number, x: number, graphicalNote: any, index: number }[] = [];
 
           measure.staffEntries.forEach(gse => {
             const entryX = gse.PositionAndShape.AbsolutePosition.x * pixelPerUnit;
@@ -76,7 +80,6 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
                     midi: soundingMidi,
                     x: entryX,
                     graphicalNote: gn,
-                    // @ts-ignore
                     index: index
                   });
                 }

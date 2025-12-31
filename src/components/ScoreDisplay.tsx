@@ -7,7 +7,9 @@ import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic,
 interface ScoreDisplayProps {
   data: string;
   showAllLines?: boolean;
-  onMeasureClick?: (measure: MeasureContext, selectedMidiNotes: Set<number>, noteX: number | null) => void;
+  onMeasureClick?: (measure: MeasureContext, selectedMidiNotes: Set<number>, noteX: number | null, forcePlay: boolean) => void;
+  onTitleReady?: (title: string) => void;
+  onLoadingStateChange?: (isLoading: boolean) => void;
   selectedMeasureNumber?: number | null;
   selectedMidiNotes?: Set<number>;
   selectedNoteX?: number | null;
@@ -17,12 +19,15 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   data,
   showAllLines = false,
   onMeasureClick,
+  onTitleReady,
+  onLoadingStateChange,
   selectedMeasureNumber = null,
   selectedMidiNotes = new Set(),
   selectedNoteX = null
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
+  const lastLoadedDataRef = useRef<string | null>(null);
   const [contexts, setContexts] = useState<MeasureContext[]>([]);
   const [ppu, setPpu] = useState<number>(10.0);
   const [hoveredMeasure, setHoveredMeasure] = useState<MeasureContext | null>(null);
@@ -40,13 +45,13 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
     // ドラッグ中（左ボタン押し下げ）であれば選択処理を実行
     if (event.buttons === 1 && onMeasureClick) {
-      updateSelectionAtPoint(x, y);
+      updateSelectionAtPoint(x, y, false); // 移動中は重複を避けるため forcePlay = false
     }
   };
 
   const handleMouseLeave = () => setHoveredMeasure(null);
 
-  const updateSelectionAtPoint = (x: number, y: number) => {
+  const updateSelectionAtPoint = (x: number, y: number, forcePlay: boolean) => {
     if (!onMeasureClick) return;
     const clickedMeasure = getMeasureAtPoint(x, y, contexts);
     
@@ -75,7 +80,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         });
       } else closestX = null;
       
-      onMeasureClick(clickedMeasure, targetMidiNotes, closestX);
+      // onMeasureClick に MIDIノート、X座標、および強制発音フラグを渡す
+      onMeasureClick(clickedMeasure, targetMidiNotes, closestX, forcePlay);
     }
   };
 
@@ -84,7 +90,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     const rect = containerRef.current.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    updateSelectionAtPoint(x, y);
+    updateSelectionAtPoint(x, y, true); // クリック時は常に音を鳴らすため forcePlay = true
   };
 
   useEffect(() => {
@@ -94,6 +100,12 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       backend: 'svg',
       drawTitle: false,
       drawPartNames: false,
+      drawingParameters: 'compacttight',
+      // レンダリング高速化のための詳細設定
+      drawLyrics: false,
+      drawFingerings: false,
+      drawSlurs: false,
+      drawMeasureNumbers: true,
     });
     osmdRef.current = osmd;
   }, []);
@@ -101,19 +113,47 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   useEffect(() => {
     const osmd = osmdRef.current;
     if (!osmd || !data) return;
+    
+    // データが実際に変更された場合のみ重い処理を実行
+    if (data === lastLoadedDataRef.current) return;
+
     const update = async () => {
       try {
+        if (onLoadingStateChange) onLoadingStateChange(true);
         if (containerRef.current) containerRef.current.innerHTML = '';
+        
+        // メインスレッドを一旦解放してローディング表示を確実に出す
+        await new Promise(resolve => setTimeout(resolve, 10));
+
         await osmd.load(data);
+        
+        // レンダリングオプションの再適用（loadでリセットされる場合があるため）
+        osmd.setOptions({
+          drawLyrics: false,
+          drawFingerings: false,
+          drawSlurs: false,
+        });
+
         osmd.render();
+        lastLoadedDataRef.current = data;
+
         const pixelPerUnit = getPixelPerUnit(osmd, containerRef.current!);
         const ctxs = extractMeasureContexts(osmd, pixelPerUnit);
         setPpu(pixelPerUnit);
         setContexts(ctxs);
-      } catch (err) { console.error("OSMD Update Error:", err); }
+
+        const title = osmd.Sheet?.TitleString;
+        if (title && onTitleReady) {
+          onTitleReady(title);
+        }
+      } catch (err) { 
+        console.error("OSMD Update Error:", err); 
+      } finally {
+        if (onLoadingStateChange) onLoadingStateChange(false);
+      }
     };
     update();
-  }, [data]);
+  }, [data, onTitleReady, onLoadingStateChange]);
 
   useEffect(() => {
     if (!containerRef.current || !osmdRef.current) return;
