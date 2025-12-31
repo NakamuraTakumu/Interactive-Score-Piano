@@ -359,6 +359,30 @@ function App() {
     setIsLoading(loading);
   }, []);
 
+  // 最初のユーザー操作でオーディオを自動開始する（"勝手にONになった"ように見せる）
+  useEffect(() => {
+    if (isAudioStarted) return;
+
+    const initAudioOnFirstInteraction = () => {
+      startAudio().then(() => {
+        // 成功したらリスナーを削除
+        ['click', 'keydown', 'touchstart', 'mousedown'].forEach(event => {
+          window.removeEventListener(event, initAudioOnFirstInteraction);
+        });
+      });
+    };
+
+    ['click', 'keydown', 'touchstart', 'mousedown'].forEach(event => {
+      window.addEventListener(event, initAudioOnFirstInteraction, { once: true });
+    });
+
+    return () => {
+      ['click', 'keydown', 'touchstart', 'mousedown'].forEach(event => {
+        window.removeEventListener(event, initAudioOnFirstInteraction);
+      });
+    };
+  }, [isAudioStarted, startAudio]);
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />

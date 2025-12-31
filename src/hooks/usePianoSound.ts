@@ -149,43 +149,78 @@ export const usePianoSound = () => {
     });
   }, [startAudio, triggerAttack, triggerRelease]);
 
-  // MIDIイベントの監視
+  // MIDIイベント処理の本体（常に最新の状態を参照できるようにRef経由で呼び出す）
+  const handleMidiMessage = useCallback((message: any) => {
+    // AudioContextの準備
+    if (!audioContextRef.current) {
+      if (isAudioStarted) {
+        initAudioContext();
+      }
+    }
+    
+    // サスペンド状態なら復帰を試みる
+    if (audioContextRef.current?.state === 'suspended') {
+      audioContextRef.current.resume().catch(e => console.warn('Failed to resume AudioContext on MIDI:', e));
+    }
+
+    const [command, note, velocity] = message.data;
+    
+    // Note On
+    if (command >= 0x90 && command <= 0x9F && velocity > 0) {
+      // コンテキストがない場合は作成を試みる（ただしユーザー操作が必要な場合があるため失敗する可能性あり）
+      if (!audioContextRef.current) {
+         try {
+           initAudioContext();
+         } catch(e) {
+           console.warn('Could not init AudioContext from MIDI event:', e);
+         }
+      }
+      triggerAttack(note, velocity / 127);
+    } 
+    // Note Off
+    else if ((command >= 0x80 && command <= 0x8F) || (command >= 0x90 && command <= 0x9F && velocity === 0)) {
+      triggerRelease(note);
+    }
+  }, [isAudioStarted, initAudioContext, triggerAttack, triggerRelease]);
+
+  // MIDIハンドラをRefに保持（イベントリスナーからはこれを呼ぶ）
+  const midiHandlerRef = useRef(handleMidiMessage);
+  useEffect(() => {
+    midiHandlerRef.current = handleMidiMessage;
+  }, [handleMidiMessage]);
+
+  // MIDI初期化（マウント時のみ実行）
   useEffect(() => {
     const onMIDISuccess = (midiAccess: MIDIAccess) => {
-      for (const input of midiAccess.inputs.values()) {
-        input.onmidimessage = (message: any) => {
-          // AudioContextが未初期化なら初期化を試みる (ユーザー操作後のみ有効)
-          if (!audioContextRef.current && isAudioStarted) {
-             initAudioContext();
-          }
-          
-          const [command, note, velocity] = message.data;
-          // Note On
-          if (command >= 0x90 && command <= 0x9F && velocity > 0) {
-            // 自動開始を試みる
-            if (audioContextRef.current?.state === 'suspended') {
-               audioContextRef.current.resume();
-            } else if (!audioContextRef.current) {
-                // 初回打鍵時は鳴らない可能性があるが、コンテキスト作成を試みる
-                initAudioContext();
-            }
-            
-            triggerAttack(note, velocity / 127);
-          } 
-          // Note Off
-          else if ((command >= 0x80 && command <= 0x8F) || (command >= 0x90 && command <= 0x9F && velocity === 0)) {
-            triggerRelease(note);
-          }
-        };
-      }
+      console.log('MIDI Access Granted');
+      
+      const setupInputs = () => {
+        for (const input of midiAccess.inputs.values()) {
+          // 既存のリスナーを上書きしないように注意が必要だが、
+          // ここではシンプルに全ての入力に対してRef経由のハンドラを設定する
+          input.onmidimessage = (event) => {
+            midiHandlerRef.current(event);
+          };
+        }
+      };
+
+      setupInputs();
+      
+      // 接続機器の変更を監視
+      midiAccess.onstatechange = (e) => {
+        console.log('MIDI State Changed:', e);
+        setupInputs();
+      };
     };
 
     const onMIDIFailure = (err: any) => {
-      console.warn('MIDI access failed in usePianoSound:', err);
+      console.warn('MIDI access failed:', err);
     };
 
     if (navigator.requestMIDIAccess) {
       navigator.requestMIDIAccess().then(onMIDISuccess, onMIDIFailure);
+    } else {
+      console.warn('Web MIDI API is not supported in this browser.');
     }
 
     return () => {
@@ -199,7 +234,7 @@ export const usePianoSound = () => {
       });
       activeOscillators.current.clear();
     };
-  }, [isAudioStarted, initAudioContext, triggerAttack, triggerRelease]);
+  }, []); // 依存配列を空にして一度だけ実行
 
   return {
     isAudioStarted,
