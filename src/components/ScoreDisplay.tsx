@@ -7,6 +7,7 @@ import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic,
 interface ScoreDisplayProps {
   data: string;
   showAllLines?: boolean;
+  showGuideLines?: boolean;
   onMeasureClick?: (measure: MeasureContext, selectedMidiNotes: Set<number>, noteX: number | null, forcePlay: boolean) => void;
   onTitleReady?: (title: string) => void;
   onLoadingStateChange?: (isLoading: boolean) => void;
@@ -18,6 +19,7 @@ interface ScoreDisplayProps {
 const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   data,
   showAllLines = false,
+  showGuideLines = true,
   onMeasureClick,
   onTitleReady,
   onLoadingStateChange,
@@ -214,7 +216,9 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
           if (allActive) {
             // A. 全ての音が弾かれている場合：和音全体（符頭、ステム、連桁などすべて）を赤くする
-            gveSvgGroup.querySelectorAll('path, ellipse').forEach(el => setCol(el as SVGElement, '#ff0000'));
+            // 音符の色変えは常に有効にする
+            const color = '#ff0000';
+            gveSvgGroup.querySelectorAll('path, ellipse').forEach(el => setCol(el as SVGElement, color));
           } else {
             // B. 一部の音だけが弾かれている、または何も弾かれていない場合
             // 1. まず全体をデフォルト色（黒または選択色の緑）にリセット
@@ -253,7 +257,9 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         lines.push(<rect key={`sel-${ctx.systemId}-${ctx.measureNumber}-${ctx.staffId}`} x={ctx.x} y={ctx.y} width={ctx.width} height={ctx.height} fill="rgba(76, 175, 80, 0.05)" stroke="#4caf50" strokeWidth="1" pointerEvents="none" />);
       });
     }
-    if (activeNotes.size > 0) {
+    
+    // ガイドラインが無効の場合は線を描画しない
+    if (showGuideLines && activeNotes.size > 0) {
       contexts.forEach((ctx) => {
         let minLimit = -1, maxLimit = 1000;
         if (ctx.minMidi !== null && ctx.maxMidi !== null) { minLimit = ctx.minMidi - 2; maxLimit = ctx.maxMidi + 2; }
@@ -268,7 +274,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       });
     }
     return lines;
-  }, [activeNotes, contexts, ppu, showAllLines, selectedMeasureNumber]);
+  }, [activeNotes, contexts, ppu, showAllLines, selectedMeasureNumber, showGuideLines]);
 
   return (
     <div style={{ position: 'relative', width: '100%', backgroundColor: '#fff', cursor: 'pointer' }} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} onClick={handleClick}>

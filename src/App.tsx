@@ -9,6 +9,7 @@ import ScoreDisplay from './components/ScoreDisplay'
 import PianoKeyboard from './components/PianoKeyboard'
 import { useMidi } from './hooks/useMidi'
 import { usePianoSound } from './hooks/usePianoSound'
+import { useWakeLock } from './hooks/useWakeLock'
 import { MeasureContext } from './types/piano'
 
 const theme = createTheme({
@@ -155,6 +156,7 @@ const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 function App() {
   const activeNotes = useMidi();
   const { isAudioStarted, startAudio, volume, setVolume, playNotes } = usePianoSound();
+  useWakeLock();
   
   const [scoreLibrary, setScoreLibrary] = useState<SavedScore[]>(() => {
     const saved = localStorage.getItem('piano_score_library');
@@ -188,6 +190,11 @@ function App() {
     return saved === 'true';
   });
 
+  const [showGuideLines, setShowGuideLines] = useState<boolean>(() => {
+    const saved = localStorage.getItem('piano_show_guide_lines');
+    return saved === null ? true : saved === 'true';
+  });
+
   const [selectedMeasure, setSelectedMeasure] = useState<MeasureContext | null>(null);
   const [selectedMidiNotes, setSelectedMidiNotes] = useState<Set<number>>(new Set());
   const [selectedNoteX, setSelectedNoteX] = useState<number | null>(null);
@@ -204,10 +211,11 @@ function App() {
       localStorage.setItem('piano_score_library', JSON.stringify(scoreLibrary));
       localStorage.setItem('piano_current_score_id', currentScoreId);
       localStorage.setItem('piano_show_all_lines', showAllLines.toString());
+      localStorage.setItem('piano_show_guide_lines', showGuideLines.toString());
     } catch (e) {
       console.warn('Failed to save settings to localStorage:', e);
     }
-  }, [scoreLibrary, currentScoreId, showAllLines]);
+  }, [scoreLibrary, currentScoreId, showAllLines, showGuideLines]);
 
   // Extract title from MusicXML
   const extractTitleFromXML = (xmlString: string, fallbackName: string): string => {
@@ -428,7 +436,12 @@ function App() {
                   <FormControlLabel
                     sx={{ whiteSpace: 'nowrap' }}
                     control={<Switch checked={showAllLines} onChange={(e) => setShowAllLines(e.target.checked)} />}
-                    label="Staff Lines"
+                    label="Show all lines"
+                  />
+                  <FormControlLabel
+                    sx={{ whiteSpace: 'nowrap' }}
+                    control={<Switch checked={showGuideLines} onChange={(e) => setShowGuideLines(e.target.checked)} />}
+                    label="Guide Lines"
                   />
                   <Box sx={{ width: 100, display: 'flex', alignItems: 'center' }}>
                     <VolumeUpIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 20 }} />
@@ -464,6 +477,7 @@ function App() {
               <MemoizedScoreDisplay 
                 data={scoreData} 
                 showAllLines={showAllLines} 
+                showGuideLines={showGuideLines}
                 onMeasureClick={handleMeasureClick}
                 onTitleReady={handleTitleReady}
                 onLoadingStateChange={handleLoadingStateChange}
