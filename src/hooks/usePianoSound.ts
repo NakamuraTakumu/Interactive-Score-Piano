@@ -118,16 +118,14 @@ export const usePianoSound = () => {
 
     osc.stop(t + release);
     
-    // ガベージコレクションのために一定時間後にMapから削除
-    // (厳密には stop イベントで消すべきだが簡易実装)
-    setTimeout(() => {
-      // まだ同じオシレーターが登録されていれば削除
+    // ガベージコレクション改善
+    osc.onended = () => {
       if (activeOscillators.current.get(midi)?.osc === osc) {
         activeOscillators.current.delete(midi);
-        osc.disconnect();
-        gain.disconnect();
       }
-    }, release * 1000 + 100);
+      osc.disconnect();
+      gain.disconnect();
+    };
   }, []);
 
   // 指定した音を一定時間鳴らす（スコアクリック用）
@@ -191,25 +189,38 @@ export const usePianoSound = () => {
 
   // MIDI初期化（マウント時のみ実行）
   useEffect(() => {
+    let midiAccessObj: MIDIAccess | null = null;
+    const savedInputs: any[] = [];
+
+    const handleMidiEvent = (event: any) => {
+      midiHandlerRef.current(event);
+    };
+
+    const cleanupInputs = () => {
+      savedInputs.forEach((input) => {
+        input.removeEventListener('midimessage', handleMidiEvent);
+      });
+      savedInputs.length = 0;
+    };
+
+    const setupInputs = (access: MIDIAccess) => {
+      cleanupInputs();
+      for (const input of access.inputs.values()) {
+        input.addEventListener('midimessage', handleMidiEvent);
+        savedInputs.push(input);
+      }
+    };
+
     const onMIDISuccess = (midiAccess: MIDIAccess) => {
       console.log('MIDI Access Granted');
+      midiAccessObj = midiAccess;
       
-      const setupInputs = () => {
-        for (const input of midiAccess.inputs.values()) {
-          // 既存のリスナーを上書きしないように注意が必要だが、
-          // ここではシンプルに全ての入力に対してRef経由のハンドラを設定する
-          input.onmidimessage = (event) => {
-            midiHandlerRef.current(event);
-          };
-        }
-      };
-
-      setupInputs();
+      setupInputs(midiAccess);
       
       // 接続機器の変更を監視
       midiAccess.onstatechange = (e) => {
         console.log('MIDI State Changed:', e);
-        setupInputs();
+        setupInputs(midiAccess);
       };
     };
 
@@ -224,6 +235,12 @@ export const usePianoSound = () => {
     }
 
     return () => {
+      // イベントリスナー解除
+      cleanupInputs();
+      if (midiAccessObj) {
+        midiAccessObj.onstatechange = null;
+      }
+
       // クリーンアップ: 全ての音を止める
       activeOscillators.current.forEach(({ osc, gain }) => {
         try {
