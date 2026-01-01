@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 
 /**
- * 現在押されているMIDIノート番号を管理するフック
+ * Hook to manage currently pressed MIDI note numbers
  */
 export const useMidi = () => {
   const [activeNotes, setActiveNotes] = useState<Set<number>>(new Set());
@@ -51,7 +51,7 @@ export const useMidi = () => {
 
     const onMIDIFailure = (err: any) => {
       console.warn('MIDI access failed:', err);
-      // ユーザー向けのアラート等はUI側で行うのが理想ですが、開発中はここでもログを出します
+      // Ideally alerts should be handled by the UI, but logging here for development
     };
 
     if (navigator.requestMIDIAccess) {

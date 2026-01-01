@@ -39,11 +39,11 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     
-    // ホバー状態の更新
+    // Update hover state
     const measure = getMeasureAtPoint(x, y, contexts);
     if (measure !== hoveredMeasure) setHoveredMeasure(measure);
 
-    // ドラッグ中（左ボタン押し下げ）であれば選択処理を実行
+    // Execute selection logic if dragging (left button down)
     if (event.buttons === 1 && onMeasureClick) {
       updateSelectionAtPoint(x, y, false); // 移動中は重複を避けるため forcePlay = false
     }
@@ -173,7 +173,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     return () => resizeObserver.disconnect();
   }, []);
 
-  // 音符の色を更新
+  // Update note colors
   useEffect(() => {
     if (contexts.length === 0) return;
     
@@ -209,7 +209,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
             el.style.stroke = color;
           };
 
-          // 全ての音が弾かれているか判定
+          // Determine if all notes are being played
           const allActive = details.length > 0 && details.every((d: any) => activeNotes.has(d.midi));
 
           if (allActive) {

@@ -1,5 +1,5 @@
 import { useState, ChangeEvent, useEffect, useCallback, memo, useMemo } from 'react'
-import { Box, Container, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Chip, Stack, Button, IconButton, Tooltip, Slider, Switch, FormControlLabel, Select, MenuItem, FormControl, InputLabel, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Backdrop, CircularProgress } from '@mui/material'
+import { Box, Container, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Stack, Button, IconButton, Tooltip, Slider, Switch, FormControlLabel, Select, MenuItem, FormControl, InputLabel, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Backdrop, CircularProgress } from '@mui/material'
 import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
@@ -27,10 +27,10 @@ interface SavedScore {
   timestamp: number;
 }
 
-// メモ化された ScoreDisplay (不必要なプロパティ変更による再描画を抑止)
+// Memoized ScoreDisplay to prevent unnecessary re-renders
 const MemoizedScoreDisplay = memo(ScoreDisplay);
 
-// 複雑な調の変化と和音（Chord）を含むテスト用 MusicXML
+// Sample MusicXML for testing with complex key changes and chords
 const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="3.1">
@@ -176,7 +176,7 @@ function App() {
     return sampleMusicXML;
   });
 
-  // fileName をライブラリから派生させる（ステートの二重管理を解消）
+  // Derive fileName from library (resolve dual state management)
   const fileName = useMemo(() => {
     if (currentScoreId === 'sample') return 'Grand Staff Sample';
     const current = scoreLibrary.find(s => s.id === currentScoreId);
@@ -192,13 +192,13 @@ function App() {
   const [selectedMidiNotes, setSelectedMidiNotes] = useState<Set<number>>(new Set());
   const [selectedNoteX, setSelectedNoteX] = useState<number | null>(null);
 
-  // 名前編集用ダイアログの状態
+  // Rename dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingScoreId, setEditingScoreId] = useState<string | null>(null);
   const [newScoreName, setNewScoreName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // ライブラリと状態の保存を確実にする
+  // Save library and state to localStorage
   useEffect(() => {
     try {
       localStorage.setItem('piano_score_library', JSON.stringify(scoreLibrary));
@@ -209,7 +209,7 @@ function App() {
     }
   }, [scoreLibrary, currentScoreId, showAllLines]);
 
-  // MusicXMLからタイトルを抽出する簡易関数
+  // Extract title from MusicXML
   const extractTitleFromXML = (xmlString: string, fallbackName: string): string => {
     try {
       if (!xmlString.includes('<?xml')) return fallbackName.replace(/\.[^/.]+$/, "");
@@ -250,7 +250,7 @@ function App() {
           setCurrentScoreId(newScore.id);
           resetSelection();
         } catch (err) {
-          alert('保存容量がいっぱいです。古い楽譜を削除してください。');
+          alert('Storage is full. Please delete some scores.');
           setIsLoading(false);
         }
       }
@@ -292,7 +292,6 @@ function App() {
         const next = prev.map(s => 
           s.id === editingScoreId ? { ...s, name: newScoreName.trim() } : s
         );
-        // localStorage への保存は useEffect が担当するが、念のため即時反映されるようにステートを更新
         return next;
       });
     }
@@ -322,7 +321,7 @@ function App() {
   };
 
   const handleMeasureClick = useCallback((measure: MeasureContext, midiNotes: Set<number>, noteX: number | null, forcePlay: boolean = false) => {
-    // 選択内容が実際に変化したか判定
+    // Check if selection changed
     const isDifferentX = noteX !== selectedNoteX;
     const isDifferentMidi = midiNotes.size !== selectedMidiNotes.size || 
                             Array.from(midiNotes).some(n => !selectedMidiNotes.has(n));
@@ -334,7 +333,7 @@ function App() {
       setSelectedMidiNotes(midiNotes);
       setSelectedNoteX(noteX);
 
-      // 音を鳴らす (新規選択時、またはクリックによる強制発音時)
+      // Play sound
       if (midiNotes.size > 0) {
         playNotes(Array.from(midiNotes));
       }
@@ -345,7 +344,7 @@ function App() {
     if (!title || title === "Untitled" || title === "Unknown") return;
     setScoreLibrary(prev => {
       const score = prev.find(s => s.id === currentScoreId);
-      // 名前がまだデフォルト（ファイル名っぽい）場合のみ更新
+      // Update if current name is default
       if (score && (score.name.includes('.') || score.name === 'Grand Staff Sample')) {
         if (score.name !== title) {
           return prev.map(s => s.id === currentScoreId ? { ...s, name: title } : s);
@@ -359,13 +358,12 @@ function App() {
     setIsLoading(loading);
   }, []);
 
-  // 最初のユーザー操作でオーディオを自動開始する（"勝手にONになった"ように見せる）
+  // Initialize audio context on first interaction
   useEffect(() => {
     if (isAudioStarted) return;
 
     const initAudioOnFirstInteraction = () => {
       startAudio().then(() => {
-        // 成功したらリスナーを削除
         ['click', 'keydown', 'touchstart', 'mousedown'].forEach(event => {
           window.removeEventListener(event, initAudioOnFirstInteraction);
         });
@@ -396,16 +394,16 @@ function App() {
               <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
                 <Box sx={{ width: 350 }}>
                   <FormControl fullWidth size="small">
-                    <InputLabel id="score-select-label">楽譜ライブラリ</InputLabel>
+                    <InputLabel id="score-select-label">Score Library</InputLabel>
                     <Select
                       labelId="score-select-label"
                       value={currentScoreId}
-                      label="楽譜ライブラリ"
+                      label="Score Library"
                       onChange={(e) => handleScoreChange(e.target.value)}
                       sx={{ '& .MuiSelect-select': { display: 'flex', alignItems: 'center' } }}
                     >
                       <MenuItem value="sample">
-                        <em>サンプル: Grand Staff Sample</em>
+                        <em>Sample: Grand Staff Sample</em>
                       </MenuItem>
                       {scoreLibrary.map((score) => (
                         <MenuItem key={score.id} value={score.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: 40 }}>
@@ -430,7 +428,7 @@ function App() {
                   <FormControlLabel
                     sx={{ whiteSpace: 'nowrap' }}
                     control={<Switch checked={showAllLines} onChange={(e) => setShowAllLines(e.target.checked)} />}
-                    label="補助線"
+                    label="Staff Lines"
                   />
                   <Box sx={{ width: 100, display: 'flex', alignItems: 'center' }}>
                     <VolumeUpIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 20 }} />
@@ -443,7 +441,7 @@ function App() {
                       onMouseDown={startAudio}
                     />
                   </Box>
-                  <Tooltip title={isAudioStarted ? "音声出力有効" : "操作で自動有効化"}>
+                  <Tooltip title={isAudioStarted ? "Audio output enabled" : "Activate on interaction"}>
                     <Button 
                       size="small"
                       variant={isAudioStarted ? "outlined" : "contained"} 
@@ -477,14 +475,14 @@ function App() {
           </Box>
         </Container>
         
-        {/* 名前編集ダイアログ */}
+        {/* Rename Dialog */}
         <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)}>
-          <DialogTitle>楽譜名の変更</DialogTitle>
+          <DialogTitle>Rename Score</DialogTitle>
           <DialogContent>
             <TextField
               autoFocus
               margin="dense"
-              label="新しい名前"
+              label="New Name"
               type="text"
               fullWidth
               variant="standard"
@@ -494,19 +492,19 @@ function App() {
             />
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setEditDialogOpen(false)}>キャンセル</Button>
-            <Button onClick={handleSaveNewName} variant="contained">保存</Button>
+            <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveNewName} variant="contained">Save</Button>
           </DialogActions>
         </Dialog>
 
-        {/* 読み込み中オーバーレイ */}
+        {/* Loading Overlay */}
         <Backdrop
           sx={{ color: '#fff', zIndex: (theme) => theme.zIndex.drawer + 1, position: 'absolute' }}
           open={isLoading}
         >
           <Stack alignItems="center" spacing={2}>
             <CircularProgress color="inherit" />
-            <Typography variant="h6">楽譜を読み込んでいます...</Typography>
+            <Typography variant="h6">Loading score...</Typography>
           </Stack>
         </Backdrop>
 

@@ -4,7 +4,7 @@ import { isDiatonic } from '../utils/osmdCoordinates';
 
 interface PianoKeyboardProps {
   activeNotes: Set<number>;
-  highlightNotes?: Set<number>; // クリックで選択された緑色の音
+  highlightNotes?: Set<number>; // Green highlight for clicked notes
   keySig?: number | null; // 調
   minNote?: number; 
   maxNote?: number; 
@@ -41,7 +41,7 @@ const PianoKeyboard: React.FC<PianoKeyboardProps> = ({
   const totalWidth = whiteKeys.length * whiteKeyWidth;
 
   const getKeyColor = (note: number, isBlack: boolean) => {
-    // 優先順位: 1. 弾いている音(赤) 2. 選択された音(緑) 3. スケール(青/水色) 4. 通常
+    // Priority: 1. Active(Red) 2. Selected(Green) 3. Scale(Blue) 4. Normal
     if (activeNotes.has(note)) return '#ff5252'; 
     if (highlightNotes.has(note)) return '#4caf50'; // 選択された音（緑）
     

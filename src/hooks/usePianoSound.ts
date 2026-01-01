@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 /**
- * Web Audio APIを直接使用して低遅延でピアノ音（シンセサイズ）を鳴らすフック
+ * Hook to play synthesized piano sounds with low latency using native Web Audio API
  */
 export const usePianoSound = () => {
   const [isAudioStarted, setIsAudioStarted] = useState(false);
   
-  // 初期値をlocalStorageから取得
+  // Retrieve initial value from localStorage
   const [volume, setVolume] = useState(() => {
     const saved = localStorage.getItem('piano_volume');
     return saved !== null ? parseFloat(saved) : 0; // dB単位 (-60 to 0)
@@ -14,22 +14,22 @@ export const usePianoSound = () => {
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
-  // 鳴っている音を管理するためのMap: MIDI番号 -> { オシレーター, ゲインノード }
+  // Map to manage active sounds: MIDI number -> { oscillator, gainNode }
   const activeOscillators = useRef<Map<number, { osc: OscillatorNode, gain: GainNode }>>(new Map());
 
-  // 音量(dB)をリニアなゲイン値(0.0-1.0)に変換
+  // Convert volume (dB) to linear gain value (0.0-1.0)
   const dbToGain = (db: number) => {
     return Math.pow(10, db / 20);
   };
 
-  // AudioContextの初期化
+  // Initialize AudioContext
   const initAudioContext = useCallback(() => {
     if (audioContextRef.current) return audioContextRef.current;
 
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     const ctx = new AudioContextClass({ latencyHint: 'interactive' });
     
-    // マスターゲインノード作成
+    // Create master gain node
     const masterGain = ctx.createGain();
     masterGain.gain.value = dbToGain(volume);
     masterGain.connect(ctx.destination);
@@ -60,7 +60,7 @@ export const usePianoSound = () => {
     localStorage.setItem('piano_volume', volume.toString());
   }, [volume]);
 
-  // ノートオン処理（発音）
+  // Note-on processing (trigger sound)
   const triggerAttack = useCallback((midi: number, velocity: number = 1.0) => {
     const ctx = audioContextRef.current;
     const masterGain = masterGainRef.current;
@@ -100,7 +100,7 @@ export const usePianoSound = () => {
     activeOscillators.current.set(midi, { osc, gain });
   }, []);
 
-  // ノートオフ処理（止音）
+  // Note-off processing (stop sound)
   const triggerRelease = useCallback((midi: number) => {
     const ctx = audioContextRef.current;
     const active = activeOscillators.current.get(midi);
