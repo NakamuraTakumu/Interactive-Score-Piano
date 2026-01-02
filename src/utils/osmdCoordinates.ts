@@ -64,10 +64,8 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
 
             if (source.StaffLinkedExpressions?.[staffIdx]) {
                 source.StaffLinkedExpressions[staffIdx].forEach(expr => {
-                    // @ts-ignore
-                    const start = expr.octaveShiftStart;
+                    const start = (expr as any).octaveShiftStart;
                     if (start) {
-                        // @ts-ignore
                         const val = start.octaveValue;
                         let shift = 0;
                         if (val === 0) shift = -12;
@@ -76,8 +74,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
                         else if (val === 3) shift = 24;
                         state.octaveShift = shift;
                     }
-                    // @ts-ignore
-                    if (expr.octaveShiftEnd) endShiftAfterThisMeasure = true;
+                    if ((expr as any).octaveShiftEnd) endShiftAfterThisMeasure = true;
                 });
             }
           }

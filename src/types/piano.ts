@@ -1,3 +1,10 @@
+export interface SavedScore {
+  id: string;
+  name: string;
+  data: string;
+  timestamp: number;
+}
+
 export type ClefType = 'G' | 'F' | 'C';
 
 export interface MeasureContext {
