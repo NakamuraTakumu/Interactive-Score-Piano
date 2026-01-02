@@ -33,30 +33,29 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
           const source = measure.parentSourceMeasure;
           let endShiftAfterThisMeasure = false;
           
+          // Use OSMD's computed active clef for this measure if available
+          if (measure.InitiallyActiveClef) {
+            const type = measure.InitiallyActiveClef.ClefType;
+            state.clef = (type === ClefEnum.F) ? 'F' : 'G';
+          }
+
           if (source && staffIdx >= 0) {
-            // Check FirstInstructionsStaffEntries (Measure start instructions)
+            // Check FirstInstructionsStaffEntries (Measure start instructions) for Key changes
             if (source.FirstInstructionsStaffEntries?.[staffIdx]) {
                 source.FirstInstructionsStaffEntries[staffIdx].Instructions.forEach(instr => {
-                  if (instr instanceof KeyInstruction) state.key = instr.Key;
-                  else if (instr instanceof ClefInstruction) {
-                    const type = instr.ClefType;
-                    if (type === ClefEnum.F) state.clef = 'F';
-                    else state.clef = 'G';
+                  if (instr instanceof KeyInstruction) {
+                    state.key = instr.Key;
                   }
                 });
             }
 
-            // Also check all StaffEntries in the measure for instructions
+            // Check all StaffEntries in the measure for mid-measure Key changes
             source.VerticalSourceStaffEntryContainers.forEach(container => {
                 const entry = container.StaffEntries[staffIdx];
                 if (entry) {
                     entry.Instructions.forEach(instr => {
                         if (instr instanceof KeyInstruction) {
                             state.key = instr.Key;
-                        } else if (instr instanceof ClefInstruction) {
-                            const type = instr.ClefType;
-                            if (type === ClefEnum.F) state.clef = 'F';
-                            else state.clef = 'G';
                         }
                     });
                 }
