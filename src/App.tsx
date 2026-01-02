@@ -153,10 +153,72 @@ const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
   </part>
 </score-partwise>`;
 
+
+
+
+// Sample MusicXML with Clef Changes (Grand Staff)
+const clefChangeSampleXML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list>
+    <score-part id="P1"><part-name>Piano</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <!-- Measure 1: Both G Clefs -->
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <staves>2</staves>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+        <clef number="2"><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <note>
+        <pitch><step>C</step><octave>5</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+        <staff>2</staff>
+      </note>
+    </measure>
+    <!-- Measure 2: Bottom changes to F Clef -->
+    <measure number="2">
+      <attributes>
+        <clef number="2"><sign>F</sign><line>4</line></clef>
+      </attributes>
+      <note>
+        <pitch><step>E</step><octave>5</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+        <staff>1</staff>
+      </note>
+      <note>
+        <pitch><step>C</step><octave>3</octave></pitch>
+        <duration>4</duration>
+        <type>whole</type>
+        <staff>2</staff>
+      </note>
+    </measure>
+  </part>
+</score-partwise>`;
+
 function App() {
   const activeNotes = useMidi();
   const { isAudioStarted, startAudio, volume, setVolume, playNotes } = usePianoSound();
-  useWakeLock();
+  const { keepAwake } = useWakeLock();
+  
+  // Keep screen awake when MIDI activity is detected
+  useEffect(() => {
+    if (activeNotes.size > 0) {
+      keepAwake();
+    }
+  }, [activeNotes, keepAwake]);
   
   const [scoreLibrary, setScoreLibrary] = useState<SavedScore[]>(() => {
     const saved = localStorage.getItem('piano_score_library');
@@ -169,6 +231,7 @@ function App() {
 
   const [scoreData, setScoreData] = useState<string>(() => {
     if (currentScoreId === 'sample') return sampleMusicXML;
+    if (currentScoreId === 'clef-sample') return clefChangeSampleXML;
     const saved = localStorage.getItem('piano_score_library');
     if (saved) {
       const library: SavedScore[] = JSON.parse(saved);
@@ -181,6 +244,7 @@ function App() {
   // Derive fileName from library (resolve dual state management)
   const fileName = useMemo(() => {
     if (currentScoreId === 'sample') return 'Grand Staff Sample';
+    if (currentScoreId === 'clef-sample') return 'Clef Change Sample';
     const current = scoreLibrary.find(s => s.id === currentScoreId);
     return current ? current.name : 'Grand Staff Sample';
   }, [currentScoreId, scoreLibrary]);
@@ -277,6 +341,9 @@ function App() {
     if (id === 'sample') {
       setScoreData(sampleMusicXML);
       setCurrentScoreId('sample');
+    } else if (id === 'clef-sample') {
+      setScoreData(clefChangeSampleXML);
+      setCurrentScoreId('clef-sample');
     } else {
       const score = scoreLibrary.find(s => s.id === id);
       if (score) {
@@ -308,7 +375,7 @@ function App() {
 
   const handleDeleteScore = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (id === 'sample') return;
+    if (id === 'sample' || id === 'clef-sample') return;
     
     const newLibrary = scoreLibrary.filter(s => s.id !== id);
     setScoreLibrary(newLibrary);
@@ -412,6 +479,9 @@ function App() {
                     >
                       <MenuItem value="sample">
                         <em>Sample: Grand Staff Sample</em>
+                      </MenuItem>
+                      <MenuItem value="clef-sample">
+                        <em>Sample: Clef Change Sample</em>
                       </MenuItem>
                       {scoreLibrary.map((score) => (
                         <MenuItem key={score.id} value={score.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: 40 }}>

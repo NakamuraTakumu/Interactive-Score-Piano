@@ -1,4 +1,4 @@
-import { OpenSheetMusicDisplay, KeyInstruction, ClefInstruction } from 'opensheetmusicdisplay';
+import { OpenSheetMusicDisplay, KeyInstruction, ClefInstruction, ClefEnum } from 'opensheetmusicdisplay';
 import { MeasureContext, ClefType } from '../types/piano';
 
 export const getPixelPerUnit = (osmd: OpenSheetMusicDisplay, container: HTMLElement): number => {
@@ -34,15 +34,34 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
           let endShiftAfterThisMeasure = false;
           
           if (source && staffIdx >= 0) {
+            // Check FirstInstructionsStaffEntries (Measure start instructions)
             if (source.FirstInstructionsStaffEntries?.[staffIdx]) {
                 source.FirstInstructionsStaffEntries[staffIdx].Instructions.forEach(instr => {
                   if (instr instanceof KeyInstruction) state.key = instr.Key;
                   else if (instr instanceof ClefInstruction) {
-                    const c = instr.ClefType.toString();
-                    state.clef = (c.includes('1') || c.includes('F')) ? 'F' : 'G';
+                    const type = instr.ClefType;
+                    if (type === ClefEnum.F) state.clef = 'F';
+                    else state.clef = 'G';
                   }
                 });
             }
+
+            // Also check all StaffEntries in the measure for instructions
+            source.VerticalSourceStaffEntryContainers.forEach(container => {
+                const entry = container.StaffEntries[staffIdx];
+                if (entry) {
+                    entry.Instructions.forEach(instr => {
+                        if (instr instanceof KeyInstruction) {
+                            state.key = instr.Key;
+                        } else if (instr instanceof ClefInstruction) {
+                            const type = instr.ClefType;
+                            if (type === ClefEnum.F) state.clef = 'F';
+                            else state.clef = 'G';
+                        }
+                    });
+                }
+            });
+
             if (source.StaffLinkedExpressions?.[staffIdx]) {
                 source.StaffLinkedExpressions[staffIdx].forEach(expr => {
                     // @ts-ignore

@@ -1,55 +1,70 @@
 import { useEffect, useRef, useCallback } from 'react';
 
+const WAKE_LOCK_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
 /**
  * Custom hook to prevent the screen from sleeping using the Wake Lock API.
+ * The lock is maintained for a specific duration after keepAwake is called.
  */
 export const useWakeLock = () => {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const timeoutRef = useRef<number | null>(null);
+
+  const releaseWakeLock = useCallback(async () => {
+    if (wakeLockRef.current) {
+      try {
+        await wakeLockRef.current.release();
+      } catch (err: any) {
+        console.warn('Failed to release Wake Lock:', err);
+      } finally {
+        wakeLockRef.current = null;
+        console.log('Wake Lock released due to inactivity');
+      }
+    }
+  }, []);
 
   const requestWakeLock = useCallback(async () => {
-    // Check if the browser supports the Wake Lock API
-    if ('wakeLock' in navigator) {
+    if (!('wakeLock' in navigator)) return;
+
+    if (!wakeLockRef.current || wakeLockRef.current.released) {
       try {
         wakeLockRef.current = await navigator.wakeLock.request('screen');
         
-        // Handle release (e.g., if the browser releases the lock)
         wakeLockRef.current.addEventListener('release', () => {
-          console.log('Wake Lock was released');
+          console.log('Wake Lock was released by system');
+          if (wakeLockRef.current?.released) {
+            wakeLockRef.current = null;
+          }
         });
         
-        console.log('Wake Lock is active');
+        console.log('Wake Lock active');
       } catch (err: any) {
         console.error(`Failed to acquire Wake Lock: ${err.name}, ${err.message}`);
       }
     }
   }, []);
 
-  const releaseWakeLock = useCallback(async () => {
-    if (wakeLockRef.current) {
-      await wakeLockRef.current.release();
-      wakeLockRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    // Request lock on mount
+  const keepAwake = useCallback(() => {
     requestWakeLock();
 
-    // Re-acquire lock when visibility changes (tab becomes visible again)
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'visible') {
-        await requestWakeLock();
-      }
-    };
+    if (timeoutRef.current) {
+      window.clearTimeout(timeoutRef.current);
+    }
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    // Clean up on unmount
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    timeoutRef.current = window.setTimeout(() => {
       releaseWakeLock();
-    };
+    }, WAKE_LOCK_TIMEOUT);
   }, [requestWakeLock, releaseWakeLock]);
 
-  return { requestWakeLock, releaseWakeLock };
+  useEffect(() => {
+    // Clean up on unmount
+    return () => {
+      if (timeoutRef.current) {
+        window.clearTimeout(timeoutRef.current);
+      }
+      releaseWakeLock();
+    };
+  }, [releaseWakeLock]);
+
+  return { keepAwake };
 };
