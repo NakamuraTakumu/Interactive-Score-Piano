@@ -37,7 +37,7 @@ export const useMidi = () => {
         devices.push({
           id: input.id,
           name: input.name || 'Unknown Device',
-          manufacturer: input.manufacturer
+          manufacturer: input.manufacturer ?? undefined
         });
       });
       setAvailableDevices(devices);

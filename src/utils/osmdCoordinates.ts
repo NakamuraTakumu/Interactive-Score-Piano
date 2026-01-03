@@ -152,7 +152,7 @@ export const getMeasureAtPoint = (x: number, y: number, contexts: MeasureContext
 
   // 垂直方向の距離が遠すぎる場合は null を返す（五線の高さの3倍程度を閾値とする）
   // これにより、システム間の広い空白や、譜面の上下の大きな余白をクリックしたときに選択を外せるようになる
-  if (closestMeasure && minDistance > closestMeasure.height * 3) {
+  if (closestMeasure && minDistance > (closestMeasure as MeasureContext).height * 3) {
     return null;
   }
 
