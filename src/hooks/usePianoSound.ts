@@ -1,263 +1,256 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { SoundType, PianoSettings } from '../types/piano';
 
 /**
- * Hook to play synthesized piano sounds with low latency using native Web Audio API
+ * Hook to play synthesized or sampled piano sounds with low latency using native Web Audio API
  */
-export const usePianoSound = () => {
+export const usePianoSound = (settings: PianoSettings, onSettingsChange: <K extends keyof PianoSettings>(key: K, value: PianoSettings[K]) => void) => {
   const [isAudioStarted, setIsAudioStarted] = useState(false);
+  const [isSamplesLoaded, setIsSamplesLoaded] = useState(false);
   
-  // Retrieve initial value from localStorage
-  const [volume, setVolume] = useState(() => {
-    const saved = localStorage.getItem('piano_volume');
-    return saved !== null ? parseFloat(saved) : 0; // dB単位 (-60 to 0)
-  });
+  const { soundType, volume, reverb, transpose, sustainEnabled, velocitySensitivity } = settings;
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
-  // Map to manage active sounds: MIDI number -> { oscillator, gainNode }
-  const activeOscillators = useRef<Map<number, { osc: OscillatorNode, gain: GainNode }>>(new Map());
+  const reverbGainRef = useRef<GainNode | null>(null);
+  
+  // Sustain management
+  const sustainActiveRef = useRef(false);
+  const notesPendingReleaseRef = useRef<Set<number>>(new Set());
+
+  // Active nodes management
+  const activeNodes = useRef<Map<number, { node: AudioScheduledSourceNode, gain: GainNode, startTime: number }>>(new Map());
+  
+  // AudioBuffer cache for sampled piano
+  const pianoSamplesRef = useRef<Map<number, AudioBuffer>>(new Map());
 
   // Convert volume (dB) to linear gain value (0.0-1.0)
-  const dbToGain = (db: number) => {
-    return Math.pow(10, db / 20);
-  };
+  const dbToGain = (db: number) => Math.pow(10, db / 20);
+
+  // Reverb Impulse Response Generator
+  const createImpulseResponse = useCallback((ctx: AudioContext, duration: number, decay: number) => {
+    const sampleRate = ctx.sampleRate;
+    const length = sampleRate * duration;
+    const impulse = ctx.createBuffer(2, length, sampleRate);
+    const left = impulse.getChannelData(0);
+    const right = impulse.getChannelData(1);
+
+    for (let i = 0; i < length; i++) {
+      const n = i / length;
+      const val = (Math.random() * 2 - 1) * Math.pow(1 - n, decay);
+      left[i] = val;
+      right[i] = val;
+    }
+    return impulse;
+  }, []);
+
+  // Load piano samples
+  const loadSamples = useCallback(async (ctx: AudioContext) => {
+    if (isSamplesLoaded) return;
+    
+    const baseUrl = 'https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/acoustic_grand_piano-mp3';
+    const notesToLoad = [21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 51, 54, 57, 60, 63, 66, 69, 72, 75, 78, 81, 84, 87, 90, 93, 96, 99, 102, 105, 108];
+    const noteNames: Record<number, string> = {
+      21: 'A0', 24: 'C1', 27: 'Eb1', 30: 'Gb1', 33: 'A1', 36: 'C2', 39: 'Eb2', 42: 'Gb2', 45: 'A2', 48: 'C3', 51: 'Eb3', 54: 'Gb3', 57: 'A3', 60: 'C4', 63: 'Eb4', 66: 'Gb4', 69: 'A4', 72: 'C5', 75: 'Eb5', 78: 'Gb5', 81: 'A5', 84: 'C6', 87: 'Eb6', 90: 'Gb6', 93: 'A6', 96: 'C7', 99: 'Eb7', 102: 'Gb7', 105: 'A7', 108: 'C8'
+    };
+
+    const loadNote = async (midi: number) => {
+      const name = noteNames[midi];
+      try {
+        const response = await fetch(`${baseUrl}/${name}.mp3`);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        pianoSamplesRef.current.set(midi, audioBuffer);
+      } catch (e) { console.error(`Failed sample ${name}:`, e); }
+    };
+
+    await Promise.all(notesToLoad.map(loadNote));
+    setIsSamplesLoaded(true);
+  }, [isSamplesLoaded]);
 
   // Initialize AudioContext
   const initAudioContext = useCallback(() => {
     if (audioContextRef.current) return audioContextRef.current;
 
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    const ctx = new AudioContextClass({ latencyHint: 'interactive' });
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ latencyHint: 'interactive' });
     
-    // Create master gain node
     const masterGain = ctx.createGain();
     masterGain.gain.value = dbToGain(volume);
     masterGain.connect(ctx.destination);
     
+    const reverbNode = ctx.createConvolver();
+    reverbNode.buffer = createImpulseResponse(ctx, 2.5, 3.0);
+    
+    const reverbGain = ctx.createGain();
+    reverbGain.gain.value = reverb;
+    
+    reverbGain.connect(reverbNode);
+    reverbNode.connect(masterGain);
+    
     audioContextRef.current = ctx;
     masterGainRef.current = masterGain;
+    reverbGainRef.current = reverbGain;
 
     setIsAudioStarted(true);
-    console.log('Web Audio API Context Started');
+    loadSamples(ctx);
     return ctx;
-  }, [volume]);
+  }, [volume, reverb, loadSamples, createImpulseResponse]);
 
-  // AudioContextの開始（ユーザーインタラクションが必要）
   const startAudio = useCallback(async () => {
     const ctx = initAudioContext();
-    if (ctx.state === 'suspended') {
-      await ctx.resume();
-    }
+    if (ctx.state === 'suspended') await ctx.resume();
   }, [initAudioContext]);
 
-  // 音量の更新
+  // Settings Updates
   useEffect(() => {
     if (masterGainRef.current) {
-      // 急激な音量変化によるノイズを防ぐため、少し時間をかけて変更
-      const now = audioContextRef.current?.currentTime || 0;
-      masterGainRef.current.gain.setTargetAtTime(dbToGain(volume), now, 0.05);
+      masterGainRef.current.gain.setTargetAtTime(dbToGain(volume), audioContextRef.current?.currentTime || 0, 0.05);
     }
-    localStorage.setItem('piano_volume', volume.toString());
   }, [volume]);
 
-  // Note-on processing (trigger sound)
+  useEffect(() => {
+    if (reverbGainRef.current) {
+      reverbGainRef.current.gain.setTargetAtTime(reverb, audioContextRef.current?.currentTime || 0, 0.05);
+    }
+  }, [reverb]);
+
+  useEffect(() => {
+    sustainActiveRef.current = sustainEnabled;
+    if (!sustainEnabled) {
+      // Release pending notes when sustain is turned off manually
+      notesPendingReleaseRef.current.forEach(midi => triggerRelease(midi, true));
+      notesPendingReleaseRef.current.clear();
+    }
+  }, [sustainEnabled]);
+
   const triggerAttack = useCallback((midi: number, velocity: number = 1.0) => {
     const ctx = audioContextRef.current;
-    const masterGain = masterGainRef.current;
-    if (!ctx || !masterGain) return;
+    if (!ctx || !masterGainRef.current || !reverbGainRef.current) return;
 
-    // 既に鳴っている同じ音があれば止める
-    if (activeOscillators.current.has(midi)) {
-      triggerRelease(midi);
+    // Transpose
+    const actualMidi = midi + transpose;
+    if (actualMidi < 0 || actualMidi > 127) return;
+
+    if (activeNodes.current.has(midi)) triggerRelease(midi, true);
+
+    const t = ctx.currentTime;
+    const gain = ctx.createGain();
+    let node: AudioScheduledSourceNode;
+
+    // Apply Velocity Sensitivity
+    const adjustedVelocity = 1.0 - velocitySensitivity + (velocity * velocitySensitivity);
+
+    if (soundType === 'piano' && isSamplesLoaded) {
+      const loadedMidis = Array.from(pianoSamplesRef.current.keys()).sort((a, b) => a - b);
+      const closestMidi = loadedMidis.reduce((prev, curr) => 
+        Math.abs(curr - actualMidi) < Math.abs(prev - actualMidi) ? curr : prev
+      );
+      const source = ctx.createBufferSource();
+      source.buffer = pianoSamplesRef.current.get(closestMidi)!;
+      source.playbackRate.value = Math.pow(2, (actualMidi - closestMidi) / 12);
+      node = source;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(adjustedVelocity, t + 0.005);
+      gain.gain.exponentialRampToValueAtTime(adjustedVelocity * 0.3, t + 0.4);
+    } else {
+      const osc = ctx.createOscillator();
+      osc.frequency.setValueAtTime(440 * Math.pow(2, (actualMidi - 69) / 12), t);
+      osc.type = 'triangle';
+      node = osc;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(adjustedVelocity, t + 0.005);
+      gain.gain.exponentialRampToValueAtTime(adjustedVelocity * 0.3, t + 0.1);
     }
 
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
+    node.connect(gain);
+    gain.connect(masterGainRef.current);
+    gain.connect(reverbGainRef.current);
+    node.start(t);
+    activeNodes.current.set(midi, { node, gain, startTime: t });
+    notesPendingReleaseRef.current.delete(midi);
+  }, [soundType, isSamplesLoaded, transpose, velocitySensitivity]);
 
-    // 周波数計算
-    const frequency = 440 * Math.pow(2, (midi - 69) / 12);
-    osc.frequency.setValueAtTime(frequency, ctx.currentTime);
-    osc.type = 'triangle'; // Tone.jsのデフォルトに近い音色
+  const triggerRelease = useCallback((midi: number, force: boolean = false) => {
+    const active = activeNodes.current.get(midi);
+    if (!active || !audioContextRef.current) return;
 
-    // エンベロープ設定 (ADSR)
-    // Tone.js default: attack: 0.005, decay: 0.1, sustain: 0.3, release: 1
-    const t = ctx.currentTime;
-    const attack = 0.005;
-    const decay = 0.1;
-    const sustain = 0.3;
+    if (sustainActiveRef.current && !force) {
+      notesPendingReleaseRef.current.add(midi);
+      return;
+    }
 
-    osc.connect(gain);
-    gain.connect(masterGain);
+    const { node, gain } = active;
+    const t = audioContextRef.current.currentTime;
+    const release = soundType === 'piano' ? 0.8 : 0.5;
 
-    osc.start(t);
-
-    // アタック
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(velocity, t + attack);
-    // ディケイ -> サステイン
-    gain.gain.exponentialRampToValueAtTime(velocity * sustain, t + attack + decay);
-
-    activeOscillators.current.set(midi, { osc, gain });
-  }, []);
-
-  // Note-off processing (stop sound)
-  const triggerRelease = useCallback((midi: number) => {
-    const ctx = audioContextRef.current;
-    const active = activeOscillators.current.get(midi);
-    if (!ctx || !active) return;
-
-    const { osc, gain } = active;
-    const t = ctx.currentTime;
-    const release = 1.0; // リリース時間
-
-    // リリースエンベロープ
-    // クリックノイズを防ぐため、現在のゲイン値から0へ向かう
     gain.gain.cancelScheduledValues(t);
     gain.gain.setValueAtTime(gain.gain.value, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + release);
-
-    osc.stop(t + release);
-    
-    // ガベージコレクション改善
-    osc.onended = () => {
-      if (activeOscillators.current.get(midi)?.osc === osc) {
-        activeOscillators.current.delete(midi);
-      }
-      osc.disconnect();
+    node.stop(t + release);
+    node.onended = () => {
+      if (activeNodes.current.get(midi)?.node === node) activeNodes.current.delete(midi);
+      node.disconnect();
       gain.disconnect();
     };
-  }, []);
+    notesPendingReleaseRef.current.delete(midi);
+  }, [soundType]);
 
-  // 指定した音を一定時間鳴らす（スコアクリック用）
-  const playNotes = useCallback(async (midiNotes: number[], durationStr: string = "4n") => {
+  const playNotes = useCallback(async (midiNotes: number[]) => {
     if (!audioContextRef.current) await startAudio();
-    const ctx = audioContextRef.current;
-    if (!ctx) return;
-    if (ctx.state !== 'running') await ctx.resume();
-
-    // durationStr ("4n") を秒数に変換 (簡易計算: BPM=120想定)
-    // 4n = 0.5s
-    const duration = 0.5; 
-
     midiNotes.forEach(note => {
       triggerAttack(note, 1.0);
-      setTimeout(() => {
-        triggerRelease(note);
-      }, duration * 1000);
+      setTimeout(() => triggerRelease(note), 500);
     });
   }, [startAudio, triggerAttack, triggerRelease]);
 
-  // MIDIイベント処理の本体（常に最新の状態を参照できるようにRef経由で呼び出す）
   const handleMidiMessage = useCallback((message: any) => {
-    // AudioContextの準備
-    if (!audioContextRef.current) {
-      if (isAudioStarted) {
-        initAudioContext();
-      }
-    }
+    const [command, data1, data2] = message.data;
     
-    // サスペンド状態なら復帰を試みる
-    if (audioContextRef.current?.state === 'suspended') {
-      audioContextRef.current.resume().catch(e => console.warn('Failed to resume AudioContext on MIDI:', e));
+    // Sustain Pedal (CC 64)
+    if (command === 0xB0 && data1 === 64) {
+      const active = data2 >= 64;
+      sustainActiveRef.current = active || sustainEnabled;
+      if (!active && !sustainEnabled) {
+        notesPendingReleaseRef.current.forEach(midi => triggerRelease(midi, true));
+        notesPendingReleaseRef.current.clear();
+      }
+      return;
     }
 
-    const [command, note, velocity] = message.data;
-    
-    // Note On
-    if (command >= 0x90 && command <= 0x9F && velocity > 0) {
-      // コンテキストがない場合は作成を試みる（ただしユーザー操作が必要な場合があるため失敗する可能性あり）
-      if (!audioContextRef.current) {
-         try {
-           initAudioContext();
-         } catch(e) {
-           console.warn('Could not init AudioContext from MIDI event:', e);
-         }
-      }
-      triggerAttack(note, velocity / 127);
-    } 
-    // Note Off
-    else if ((command >= 0x80 && command <= 0x8F) || (command >= 0x90 && command <= 0x9F && velocity === 0)) {
-      triggerRelease(note);
+    if (command >= 0x90 && command <= 0x9F && data2 > 0) {
+      if (!audioContextRef.current) initAudioContext();
+      triggerAttack(data1, data2 / 127);
+    } else if ((command >= 0x80 && command <= 0x8F) || (command >= 0x90 && command <= 0x9F && data2 === 0)) {
+      triggerRelease(data1);
     }
-  }, [isAudioStarted, initAudioContext, triggerAttack, triggerRelease]);
+  }, [initAudioContext, triggerAttack, triggerRelease, sustainEnabled]);
 
-  // MIDIハンドラをRefに保持（イベントリスナーからはこれを呼ぶ）
   const midiHandlerRef = useRef(handleMidiMessage);
-  useEffect(() => {
-    midiHandlerRef.current = handleMidiMessage;
-  }, [handleMidiMessage]);
+  useEffect(() => { midiHandlerRef.current = handleMidiMessage; }, [handleMidiMessage]);
 
-  // MIDI初期化（マウント時のみ実行）
   useEffect(() => {
     let midiAccessObj: MIDIAccess | null = null;
     const savedInputs: any[] = [];
-
-    const handleMidiEvent = (event: any) => {
-      midiHandlerRef.current(event);
-    };
-
-    const cleanupInputs = () => {
-      savedInputs.forEach((input) => {
-        input.removeEventListener('midimessage', handleMidiEvent);
-      });
-      savedInputs.length = 0;
-    };
-
     const setupInputs = (access: MIDIAccess) => {
-      cleanupInputs();
+      savedInputs.forEach(i => i.removeEventListener('midimessage', (e: any) => midiHandlerRef.current(e)));
+      savedInputs.length = 0;
       for (const input of access.inputs.values()) {
-        input.addEventListener('midimessage', handleMidiEvent);
+        input.addEventListener('midimessage', (e: any) => midiHandlerRef.current(e));
         savedInputs.push(input);
       }
     };
-
-    const onMIDISuccess = (midiAccess: MIDIAccess) => {
-      console.log('MIDI Access Granted');
-      midiAccessObj = midiAccess;
-      
-      setupInputs(midiAccess);
-      
-      // 接続機器の変更を監視
-      midiAccess.onstatechange = (e) => {
-        console.log('MIDI State Changed:', e);
-        setupInputs(midiAccess);
-      };
-    };
-
-    const onMIDIFailure = (err: any) => {
-      console.warn('MIDI access failed:', err);
-    };
-
     if (navigator.requestMIDIAccess) {
-      navigator.requestMIDIAccess().then(onMIDISuccess, onMIDIFailure);
-    } else {
-      console.warn('Web MIDI API is not supported in this browser.');
-    }
-
-    return () => {
-      // イベントリスナー解除
-      cleanupInputs();
-      if (midiAccessObj) {
-        midiAccessObj.onstatechange = null;
-      }
-
-      // クリーンアップ: 全ての音を止める
-      activeOscillators.current.forEach(({ osc, gain }) => {
-        try {
-          osc.stop();
-          osc.disconnect();
-          gain.disconnect();
-        } catch(e) {}
+      navigator.requestMIDIAccess().then(access => {
+        midiAccessObj = access;
+        setupInputs(access);
+        access.onstatechange = () => setupInputs(access);
       });
-      activeOscillators.current.clear();
+    }
+    return () => {
+      if (midiAccessObj) midiAccessObj.onstatechange = null;
+      activeNodes.current.forEach(({ node, gain }) => { try { node.stop(); node.disconnect(); gain.disconnect(); } catch(e) {} });
     };
-  }, []); // 依存配列を空にして一度だけ実行
+  }, []);
 
-  return {
-    isAudioStarted,
-    startAudio,
-    volume,
-    setVolume,
-    playNotes
-  };
+  return { isAudioStarted, isSamplesLoaded, startAudio, playNotes };
 };

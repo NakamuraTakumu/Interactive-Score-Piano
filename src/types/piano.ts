@@ -6,6 +6,18 @@ export interface SavedScore {
 }
 
 export type ClefType = 'G' | 'F' | 'C';
+export type SoundType = 'piano' | 'synth';
+
+export interface PianoSettings {
+  showAllLines: boolean;
+  showGuideLines: boolean;
+  soundType: SoundType;
+  volume: number;
+  reverb: number;
+  transpose: number;
+  sustainEnabled: boolean;
+  velocitySensitivity: number;
+}
 
 export interface MeasureContext {
   measureNumber: number;

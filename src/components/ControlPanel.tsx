@@ -1,14 +1,19 @@
-import React, { ChangeEvent } from 'react';
+import React, { ChangeEvent, useState } from 'react';
 import { 
   Box, Paper, Stack, Button, IconButton, Tooltip, Slider, Switch, FormControlLabel, 
-  Select, MenuItem, FormControl, InputLabel, Typography 
+  Select, MenuItem, FormControl, InputLabel, Typography, CircularProgress,
+  Popover, Divider
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
-import { SavedScore } from '../types/piano';
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
+import PianoIcon from '@mui/icons-material/Piano';
+import SettingsIcon from '@mui/icons-material/Settings';
+import TuneIcon from '@mui/icons-material/Tune';
+import { SavedScore, SoundType, PianoSettings } from '../types/piano';
 
 interface ControlPanelProps {
   scoreLibrary: SavedScore[];
@@ -16,15 +21,12 @@ interface ControlPanelProps {
   onScoreChange: (id: string) => void;
   onOpenEditDialog: (e: React.MouseEvent, score: SavedScore) => void;
   onDeleteScore: (e: React.MouseEvent, id: string) => void;
-  showAllLines: boolean;
-  setShowAllLines: (show: boolean) => void;
-  showGuideLines: boolean;
-  setShowGuideLines: (show: boolean) => void;
-  volume: number;
-  onVolumeChange: (event: Event, newValue: number | number[]) => void;
+  settings: PianoSettings;
+  updateSetting: <K extends keyof PianoSettings>(key: K, value: PianoSettings[K]) => void;
   isAudioStarted: boolean;
   onStartAudio: () => void;
   onFileUpload: (event: ChangeEvent<HTMLInputElement>) => void;
+  isSamplesLoaded: boolean;
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -33,94 +35,176 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onScoreChange,
   onOpenEditDialog,
   onDeleteScore,
-  showAllLines,
-  setShowAllLines,
-  showGuideLines,
-  setShowGuideLines,
-  volume,
-  onVolumeChange,
+  settings,
+  updateSetting,
   isAudioStarted,
   onStartAudio,
-  onFileUpload
+  onFileUpload,
+  isSamplesLoaded
 }) => {
+  const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
+
+  const handleSettingsClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setAnchorEl(event.currentTarget);
+    onStartAudio();
+  };
+
+  const handleSettingsClose = () => {
+    setAnchorEl(null);
+  };
+
+  const open = Boolean(anchorEl);
+  const id = open ? 'settings-popover' : undefined;
+
   return (
     <Stack spacing={2} sx={{ mb: 3 }}>
       <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-        <Box sx={{ width: 350 }}>
-          <FormControl fullWidth size="small">
-            <InputLabel id="score-select-label">Score Library</InputLabel>
-            <Select
-              labelId="score-select-label"
-              value={currentScoreId}
-              label="Score Library"
-              onChange={(e) => onScoreChange(e.target.value)}
-              sx={{ '& .MuiSelect-select': { display: 'flex', alignItems: 'center' } }}
-            >
-              <MenuItem value="sample">
-                <em>Sample: Grand Staff Sample</em>
-              </MenuItem>
-              <MenuItem value="clef-sample">
-                <em>Sample: Clef Change Sample</em>
-              </MenuItem>
-              {scoreLibrary.map((score) => (
-                <MenuItem key={score.id} value={score.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: 40 }}>
-                  <Typography variant="body2" sx={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {score.name}
-                  </Typography>
-                  <Box sx={{ ml: 1, display: 'flex' }}>
-                    <IconButton size="small" onClick={(e) => onOpenEditDialog(e, score)} sx={{ mr: 0.5 }}>
-                      <EditIcon fontSize="inherit" />
-                    </IconButton>
-                    <IconButton size="small" onClick={(e) => onDeleteScore(e, score.id)}>
-                      <DeleteIcon fontSize="inherit" />
-                    </IconButton>
-                  </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexGrow: 1 }}>
+          <Box sx={{ width: 280 }}>
+            <FormControl fullWidth size="small">
+              <InputLabel id="score-select-label">Score Library</InputLabel>
+              <Select
+                labelId="score-select-label"
+                value={currentScoreId}
+                label="Score Library"
+                onChange={(e) => onScoreChange(e.target.value)}
+              >
+                <MenuItem value="sample"><em>Sample: Grand Staff</em></MenuItem>
+                <MenuItem value="clef-sample"><em>Sample: Clef Change</em></MenuItem>
+                {scoreLibrary.map((score) => (
+                  <MenuItem key={score.id} value={score.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: 40 }}>
+                    <Typography variant="body2" sx={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {score.name}
+                    </Typography>
+                    <Box sx={{ ml: 1, display: 'flex' }}>
+                      <IconButton size="small" onClick={(e) => onOpenEditDialog(e, score)} sx={{ mr: 0.5 }}><EditIcon fontSize="inherit" /></IconButton>
+                      <IconButton size="small" onClick={(e) => onDeleteScore(e, score.id)}><DeleteIcon fontSize="inherit" /></IconButton>
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Box>
+
+          <Box sx={{ width: 130 }}>
+            <FormControl fullWidth size="small">
+              <InputLabel id="sound-type-label">Sound</InputLabel>
+              <Select
+                labelId="sound-type-label"
+                value={settings.soundType}
+                label="Sound"
+                onChange={(e) => updateSetting('soundType', e.target.value as SoundType)}
+                onOpen={onStartAudio}
+              >
+                <MenuItem value="piano" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <PianoIcon fontSize="small" /> Piano
+                  {!isSamplesLoaded && settings.soundType === 'piano' && <CircularProgress size={12} sx={{ ml: 1 }} />}
                 </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+                <MenuItem value="synth" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <MusicNoteIcon fontSize="small" /> Synth
+                </MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+
+          <Tooltip title="Advanced Audio Settings">
+            <IconButton onClick={handleSettingsClick} color={open ? "primary" : "default"}>
+              <TuneIcon />
+            </IconButton>
+          </Tooltip>
         </Box>
         
         <Stack direction="row" spacing={2} alignItems="center">
           <FormControlLabel
             sx={{ whiteSpace: 'nowrap' }}
-            control={<Switch checked={showAllLines} onChange={(e) => setShowAllLines(e.target.checked)} />}
-            label="Show all lines"
+            control={<Switch checked={settings.showAllLines} onChange={(e) => updateSetting('showAllLines', e.target.checked)} />}
+            label="All lines"
           />
           <FormControlLabel
             sx={{ whiteSpace: 'nowrap' }}
-            control={<Switch checked={showGuideLines} onChange={(e) => setShowGuideLines(e.target.checked)} />}
-            label="Guide Lines"
+            control={<Switch checked={settings.showGuideLines} onChange={(e) => updateSetting('showGuideLines', e.target.checked)} />}
+            label="Guides"
           />
           <Box sx={{ width: 100, display: 'flex', alignItems: 'center' }}>
             <VolumeUpIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 20 }} />
             <Slider 
               size="small"
-              value={volume} 
-              onChange={onVolumeChange} 
-              min={-60} 
-              max={10} 
+              value={settings.volume} 
+              onChange={(_, v) => updateSetting('volume', v as number)} 
+              min={-60} max={10} 
               onMouseDown={onStartAudio}
             />
           </Box>
-          <Tooltip title={isAudioStarted ? "Audio output enabled" : "Activate on interaction"}>
-            <Button 
-              size="small"
-              variant={isAudioStarted ? "outlined" : "contained"} 
-              color={isAudioStarted ? "success" : "warning"}
-              onClick={onStartAudio}
-              startIcon={isAudioStarted ? <VolumeUpIcon /> : <VolumeOffIcon />}
-              disabled={isAudioStarted}
-            >
-              {isAudioStarted ? "ON" : "OFF"}
-            </Button>
-          </Tooltip>
+          <Button 
+            size="small"
+            variant={isAudioStarted ? "outlined" : "contained"} 
+            color={isAudioStarted ? "success" : "warning"}
+            onClick={onStartAudio}
+            startIcon={isAudioStarted ? <VolumeUpIcon /> : <VolumeOffIcon />}
+            disabled={isAudioStarted}
+          >
+            {isAudioStarted ? "ON" : "OFF"}
+          </Button>
           <Button size="small" variant="contained" component="label" startIcon={<CloudUploadIcon />}>
             Open
             <input type="file" hidden accept=".mxl,.xml,.musicxml" onChange={onFileUpload} />
           </Button>
         </Stack>
       </Paper>
+
+      <Popover
+        id={id}
+        open={open}
+        anchorEl={anchorEl}
+        onClose={handleSettingsClose}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Paper sx={{ p: 3, width: 300 }}>
+          <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <SettingsIcon fontSize="small" /> Advanced Settings
+          </Typography>
+          <Divider sx={{ mb: 2 }} />
+          
+          <Stack spacing={3}>
+            <Box>
+              <Typography variant="caption" color="text.secondary">Reverb (Hall Ambience)</Typography>
+              <Slider 
+                size="small" value={settings.reverb} 
+                onChange={(_, v) => updateSetting('reverb', v as number)} 
+                min={0} max={1} step={0.01}
+                valueLabelDisplay="auto"
+              />
+            </Box>
+
+            <Box>
+              <Typography variant="caption" color="text.secondary">Transpose (Half-steps)</Typography>
+              <Slider 
+                size="small" value={settings.transpose} 
+                onChange={(_, v) => updateSetting('transpose', v as number)} 
+                min={-12} max={12} step={1}
+                marks={[{value: 0, label: '0'}]}
+                valueLabelDisplay="auto"
+              />
+            </Box>
+
+            <Box>
+              <Typography variant="caption" color="text.secondary">Velocity Sensitivity</Typography>
+              <Slider 
+                size="small" value={settings.velocitySensitivity} 
+                onChange={(_, v) => updateSetting('velocitySensitivity', v as number)} 
+                min={0} max={1} step={0.1}
+                valueLabelDisplay="auto"
+              />
+            </Box>
+
+            <FormControlLabel
+              control={<Switch size="small" checked={settings.sustainEnabled} onChange={(e) => updateSetting('sustainEnabled', e.target.checked)} />}
+              label={<Typography variant="body2">Always Sustain (Pedal ON)</Typography>}
+            />
+          </Stack>
+        </Paper>
+      </Popover>
     </Stack>
   );
 };

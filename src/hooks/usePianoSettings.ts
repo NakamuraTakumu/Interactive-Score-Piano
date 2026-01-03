@@ -1,30 +1,50 @@
 import { useState, useEffect } from 'react';
+import { PianoSettings, SoundType } from '../types/piano';
+
+const DEFAULT_SETTINGS: PianoSettings = {
+  showAllLines: false,
+  showGuideLines: true,
+  soundType: 'piano',
+  volume: 0,
+  reverb: 0.3,
+  transpose: 0,
+  sustainEnabled: false,
+  velocitySensitivity: 0.8
+};
 
 export const usePianoSettings = () => {
-  const [showAllLines, setShowAllLines] = useState<boolean>(() => {
-    const saved = localStorage.getItem('piano_show_all_lines');
-    return saved === 'true';
+  const [settings, setSettings] = useState<PianoSettings>(() => {
+    const saved = localStorage.getItem('piano_app_settings');
+    if (saved) {
+      try {
+        return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+      } catch (e) {
+        return DEFAULT_SETTINGS;
+      }
+    }
+    return DEFAULT_SETTINGS;
   });
 
-  const [showGuideLines, setShowGuideLines] = useState<boolean>(() => {
-    const saved = localStorage.getItem('piano_show_guide_lines');
-    return saved === null ? true : saved === 'true';
-  });
+  const updateSetting = <K extends keyof PianoSettings>(key: K, value: PianoSettings[K]) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+  };
 
   // Persist settings to localStorage
   useEffect(() => {
-    try {
-      localStorage.setItem('piano_show_all_lines', showAllLines.toString());
-      localStorage.setItem('piano_show_guide_lines', showGuideLines.toString());
-    } catch (e) {
-      console.warn('Failed to save settings to localStorage:', e);
-    }
-  }, [showAllLines, showGuideLines]);
+    localStorage.setItem('piano_app_settings', JSON.stringify(settings));
+  }, [settings]);
 
   return {
-    showAllLines,
-    setShowAllLines,
-    showGuideLines,
-    setShowGuideLines
+    settings,
+    updateSetting,
+    // Helper accessors for convenience
+    showAllLines: settings.showAllLines,
+    setShowAllLines: (val: boolean) => updateSetting('showAllLines', val),
+    showGuideLines: settings.showGuideLines,
+    setShowGuideLines: (val: boolean) => updateSetting('showGuideLines', val),
+    soundType: settings.soundType,
+    setSoundType: (val: SoundType) => updateSetting('soundType', val),
+    volume: settings.volume,
+    setVolume: (val: number) => updateSetting('volume', val)
   };
 };

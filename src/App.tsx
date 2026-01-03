@@ -25,7 +25,10 @@ const MemoizedScoreDisplay = memo(ScoreDisplay);
 
 function App() {
   const activeNotes = useMidi();
-  const { isAudioStarted, startAudio, volume, setVolume, playNotes } = usePianoSound();
+  const { settings, updateSetting, showAllLines, showGuideLines } = usePianoSettings();
+  const { 
+    isAudioStarted, isSamplesLoaded, startAudio, playNotes 
+  } = usePianoSound(settings, updateSetting);
   const { keepAwake } = useWakeLock();
   
   // Custom Hooks
@@ -33,10 +36,6 @@ function App() {
     scoreLibrary, currentScoreId, scoreData, isLoading, setIsLoading,
     handleFileUpload, handleScoreChange, handleDeleteScore, renameScore, updateScoreNameFromTitle
   } = useScoreLibrary();
-
-  const {
-    showAllLines, setShowAllLines, showGuideLines, setShowGuideLines
-  } = usePianoSettings();
 
   // Local State for Interaction
   const [selectedMeasure, setSelectedMeasure] = useState<MeasureContext | null>(null);
@@ -83,33 +82,20 @@ function App() {
   const handleDeleteScoreWrapper = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     handleDeleteScore(id);
-    // If deleted current score, it defaults back to sample in the hook, but we might need to reset selection
-    if (currentScoreId === id) {
-       resetSelection();
-    }
-  };
-
-  const handleVolumeChange = (_event: Event, newValue: number | number[]) => {
-    setVolume(newValue as number);
+    if (currentScoreId === id) resetSelection();
   };
 
   const handleMeasureClick = useCallback((measure: MeasureContext, midiNotes: Set<number>, noteX: number | null, forcePlay: boolean = false) => {
-    // Check if selection changed
     const isDifferentX = noteX !== selectedNoteX;
     const isDifferentMidi = midiNotes.size !== selectedMidiNotes.size || 
                             Array.from(midiNotes).some(n => !selectedMidiNotes.has(n));
-    
     const isNewSelection = isDifferentX || isDifferentMidi;
 
     if (isNewSelection || forcePlay) {
       setSelectedMeasure(measure);
       setSelectedMidiNotes(midiNotes);
       setSelectedNoteX(noteX);
-
-      // Play sound
-      if (midiNotes.size > 0) {
-        playNotes(Array.from(midiNotes));
-      }
+      if (midiNotes.size > 0) playNotes(Array.from(midiNotes));
     }
   }, [playNotes, selectedNoteX, selectedMidiNotes]);
 
@@ -124,7 +110,6 @@ function App() {
   // Initialize audio context on first interaction
   useEffect(() => {
     if (isAudioStarted) return;
-
     const initAudioOnFirstInteraction = () => {
       startAudio().then(() => {
         ['click', 'keydown', 'touchstart', 'mousedown'].forEach(event => {
@@ -132,11 +117,9 @@ function App() {
         });
       });
     };
-
     ['click', 'keydown', 'touchstart', 'mousedown'].forEach(event => {
       window.addEventListener(event, initAudioOnFirstInteraction, { once: true });
     });
-
     return () => {
       ['click', 'keydown', 'touchstart', 'mousedown'].forEach(event => {
         window.removeEventListener(event, initAudioOnFirstInteraction);
@@ -160,15 +143,12 @@ function App() {
               onScoreChange={onScoreChangeWrapper}
               onOpenEditDialog={handleOpenEditDialog}
               onDeleteScore={handleDeleteScoreWrapper}
-              showAllLines={showAllLines}
-              setShowAllLines={setShowAllLines}
-              showGuideLines={showGuideLines}
-              setShowGuideLines={setShowGuideLines}
-              volume={volume}
-              onVolumeChange={handleVolumeChange}
+              settings={settings}
+              updateSetting={updateSetting}
               isAudioStarted={isAudioStarted}
               onStartAudio={startAudio}
               onFileUpload={(e) => handleFileUpload(e, resetSelection)}
+              isSamplesLoaded={isSamplesLoaded}
             />
 
             <Paper elevation={3} sx={{ p: 2, minHeight: '600px', position: 'relative' }}>
@@ -219,4 +199,3 @@ function App() {
 }
 
 export default App;
-
