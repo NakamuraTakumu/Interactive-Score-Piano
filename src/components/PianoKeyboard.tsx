@@ -54,15 +54,18 @@ const PianoKeyboard: React.FC<PianoKeyboardProps> = ({
   };
 
   return (
-    <Box sx={{ 
-      width: '100%', 
-      overflowX: 'auto', 
-      py: 2, 
-      display: 'flex', 
-      justifyContent: 'center',
-      bgcolor: '#1a1a1a',
-      borderTop: '3px solid #333'
-    }}>
+    <Box 
+      sx={{ 
+        width: '100%', 
+        overflowX: 'auto', 
+        py: 2, 
+        display: 'flex', 
+        justifyContent: 'center',
+        bgcolor: '#1a1a1a',
+        borderTop: '3px solid #333'
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
       <svg 
         width={totalWidth} 
         height={whiteKeyHeight} 

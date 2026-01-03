@@ -13,7 +13,9 @@ import MusicNoteIcon from '@mui/icons-material/MusicNote';
 import PianoIcon from '@mui/icons-material/Piano';
 import SettingsIcon from '@mui/icons-material/Settings';
 import TuneIcon from '@mui/icons-material/Tune';
+import KeyboardIcon from '@mui/icons-material/Keyboard';
 import { SavedScore, SoundType, PianoSettings } from '../types/piano';
+import { MidiDevice } from '../hooks/useMidi';
 
 interface ControlPanelProps {
   scoreLibrary: SavedScore[];
@@ -27,6 +29,9 @@ interface ControlPanelProps {
   onStartAudio: () => void;
   onFileUpload: (event: ChangeEvent<HTMLInputElement>) => void;
   isSamplesLoaded: boolean;
+  availableMidiDevices: MidiDevice[];
+  selectedMidiDeviceId: string;
+  onMidiDeviceChange: (id: string) => void;
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -40,7 +45,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   isAudioStarted,
   onStartAudio,
   onFileUpload,
-  isSamplesLoaded
+  isSamplesLoaded,
+  availableMidiDevices,
+  selectedMidiDeviceId,
+  onMidiDeviceChange
 }) => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
 
@@ -57,10 +65,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const id = open ? 'settings-popover' : undefined;
 
   return (
-    <Stack spacing={2} sx={{ mb: 3 }}>
+    <Stack spacing={2} sx={{ mb: 3 }} onClick={(e) => e.stopPropagation()}>
       <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexGrow: 1 }}>
-          <Box sx={{ width: 280 }}>
+          <Box sx={{ width: 300 }}>
             <FormControl fullWidth size="small">
               <InputLabel id="score-select-label">Score Library</InputLabel>
               <Select
@@ -68,6 +76,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                 value={currentScoreId}
                 label="Score Library"
                 onChange={(e) => onScoreChange(e.target.value)}
+                renderValue={(selected) => {
+                  if (selected === 'sample') return 'Sample: Grand Staff';
+                  if (selected === 'clef-sample') return 'Sample: Clef Change';
+                  const score = scoreLibrary.find(s => s.id === selected);
+                  return score ? score.name : selected;
+                }}
               >
                 <MenuItem value="sample"><em>Sample: Grand Staff</em></MenuItem>
                 <MenuItem value="clef-sample"><em>Sample: Clef Change</em></MenuItem>
@@ -86,46 +100,15 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             </FormControl>
           </Box>
 
-          <Box sx={{ width: 130 }}>
-            <FormControl fullWidth size="small">
-              <InputLabel id="sound-type-label">Sound</InputLabel>
-              <Select
-                labelId="sound-type-label"
-                value={settings.soundType}
-                label="Sound"
-                onChange={(e) => updateSetting('soundType', e.target.value as SoundType)}
-                onOpen={onStartAudio}
-              >
-                <MenuItem value="piano" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <PianoIcon fontSize="small" /> Piano
-                  {!isSamplesLoaded && settings.soundType === 'piano' && <CircularProgress size={12} sx={{ ml: 1 }} />}
-                </MenuItem>
-                <MenuItem value="synth" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <MusicNoteIcon fontSize="small" /> Synth
-                </MenuItem>
-              </Select>
-            </FormControl>
-          </Box>
-
-          <Tooltip title="Advanced Audio Settings">
+          <Tooltip title="Settings & MIDI">
             <IconButton onClick={handleSettingsClick} color={open ? "primary" : "default"}>
               <TuneIcon />
             </IconButton>
           </Tooltip>
         </Box>
         
-        <Stack direction="row" spacing={2} alignItems="center">
-          <FormControlLabel
-            sx={{ whiteSpace: 'nowrap' }}
-            control={<Switch checked={settings.showAllLines} onChange={(e) => updateSetting('showAllLines', e.target.checked)} />}
-            label="All lines"
-          />
-          <FormControlLabel
-            sx={{ whiteSpace: 'nowrap' }}
-            control={<Switch checked={settings.showGuideLines} onChange={(e) => updateSetting('showGuideLines', e.target.checked)} />}
-            label="Guides"
-          />
-          <Box sx={{ width: 100, display: 'flex', alignItems: 'center' }}>
+        <Stack direction="row" spacing={3} alignItems="center">
+          <Box sx={{ width: 120, display: 'flex', alignItems: 'center' }}>
             <VolumeUpIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 20 }} />
             <Slider 
               size="small"
@@ -160,13 +143,74 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         transformOrigin={{ vertical: 'top', horizontal: 'center' }}
       >
-        <Paper sx={{ p: 3, width: 300 }}>
+        <Paper sx={{ p: 3, width: 320 }}>
           <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <SettingsIcon fontSize="small" /> Advanced Settings
+            <SettingsIcon fontSize="small" /> Settings & MIDI
           </Typography>
           <Divider sx={{ mb: 2 }} />
           
-          <Stack spacing={3}>
+          <Stack spacing={2.5}>
+            {/* MIDI Input Section */}
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>MIDI Input Device</Typography>
+              <FormControl fullWidth size="small">
+                <Select
+                  value={selectedMidiDeviceId}
+                  onChange={(e) => onMidiDeviceChange(e.target.value)}
+                >
+                  <MenuItem value="all"><em>All MIDI Devices</em></MenuItem>
+                  {availableMidiDevices.map((device) => (
+                    <MenuItem key={device.id} value={device.id}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <KeyboardIcon fontSize="small" color="action" />
+                        {device.name}
+                      </Box>
+                    </MenuItem>
+                  ))}
+                  {availableMidiDevices.length === 0 && (
+                    <MenuItem disabled>No devices detected</MenuItem>
+                  )}
+                </Select>
+              </FormControl>
+            </Box>
+
+            {/* Sound Type Section */}
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>Sound Type</Typography>
+              <FormControl fullWidth size="small">
+                <Select
+                  value={settings.soundType}
+                  onChange={(e) => updateSetting('soundType', e.target.value as SoundType)}
+                  onOpen={onStartAudio}
+                >
+                  <MenuItem value="piano" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <PianoIcon fontSize="small" /> Piano
+                    {!isSamplesLoaded && settings.soundType === 'piano' && <CircularProgress size={12} sx={{ ml: 1 }} />}
+                  </MenuItem>
+                  <MenuItem value="synth" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <MusicNoteIcon fontSize="small" /> Synth
+                  </MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+
+            <Divider />
+
+            {/* Display Toggles */}
+            <Stack direction="row" spacing={2}>
+              <FormControlLabel
+                control={<Switch size="small" checked={settings.showAllLines} onChange={(e) => updateSetting('showAllLines', e.target.checked)} />}
+                label={<Typography variant="body2">All Lines</Typography>}
+              />
+              <FormControlLabel
+                control={<Switch size="small" checked={settings.showGuideLines} onChange={(e) => updateSetting('showGuideLines', e.target.checked)} />}
+                label={<Typography variant="body2">Guides</Typography>}
+              />
+            </Stack>
+
+            <Divider />
+
+            {/* Existing Advanced Settings */}
             <Box>
               <Typography variant="caption" color="text.secondary">Reverb (Hall Ambience)</Typography>
               <Slider 

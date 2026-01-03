@@ -1,15 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+
+export interface MidiDevice {
+  id: string;
+  name: string;
+  manufacturer?: string;
+}
 
 /**
- * Hook to manage currently pressed MIDI note numbers
+ * Hook to manage currently pressed MIDI note numbers and MIDI devices
  */
 export const useMidi = () => {
   const [activeNotes, setActiveNotes] = useState<Set<number>>(new Set());
+  const [availableDevices, setAvailableDevices] = useState<MidiDevice[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('all');
+  const [midiAccess, setMidiAccess] = useState<MIDIAccess | null>(null);
 
   useEffect(() => {
-    let midiAccessObj: MIDIAccess | null = null;
-    const savedInputs: any[] = [];
-
     const handleMidiMessage = (message: any) => {
       const [command, note, velocity] = message.data;
       
@@ -25,33 +31,42 @@ export const useMidi = () => {
       }
     };
 
-    const cleanupInputs = () => {
-      savedInputs.forEach((input) => {
-        input.removeEventListener('midimessage', handleMidiMessage);
+    const updateDevices = (access: MIDIAccess) => {
+      const devices: MidiDevice[] = [];
+      access.inputs.forEach((input) => {
+        devices.push({
+          id: input.id,
+          name: input.name || 'Unknown Device',
+          manufacturer: input.manufacturer
+        });
       });
-      savedInputs.length = 0;
+      setAvailableDevices(devices);
     };
 
-    const setupInputs = (access: MIDIAccess) => {
-      cleanupInputs();
-      for (const input of access.inputs.values()) {
-        input.addEventListener('midimessage', handleMidiMessage);
-        savedInputs.push(input);
-      }
+    const setupInputs = (access: MIDIAccess, deviceId: string) => {
+      access.inputs.forEach((input) => {
+        // 全てのデバイス、または選択されたIDのデバイスのみ購読
+        if (deviceId === 'all' || input.id === deviceId) {
+          input.onmidimessage = handleMidiMessage;
+        } else {
+          input.onmidimessage = null;
+        }
+      });
     };
 
-    const onMIDISuccess = (midiAccess: MIDIAccess) => {
-      midiAccessObj = midiAccess;
-      setupInputs(midiAccess);
+    const onMIDISuccess = (access: MIDIAccess) => {
+      setMidiAccess(access);
+      updateDevices(access);
+      setupInputs(access, selectedDeviceId);
 
-      midiAccess.onstatechange = () => {
-        setupInputs(midiAccess);
+      access.onstatechange = () => {
+        updateDevices(access);
+        setupInputs(access, selectedDeviceId);
       };
     };
 
     const onMIDIFailure = (err: any) => {
       console.warn('MIDI access failed:', err);
-      // Ideally alerts should be handled by the UI, but logging here for development
     };
 
     if (navigator.requestMIDIAccess) {
@@ -61,12 +76,23 @@ export const useMidi = () => {
     }
 
     return () => {
-      cleanupInputs();
-      if (midiAccessObj) {
-        midiAccessObj.onstatechange = null;
+      if (midiAccess) {
+        midiAccess.inputs.forEach((input) => {
+          input.onmidimessage = null;
+        });
+        midiAccess.onstatechange = null;
       }
     };
+  }, [selectedDeviceId, midiAccess]);
+
+  const selectDevice = useCallback((id: string) => {
+    setSelectedDeviceId(id);
   }, []);
 
-  return activeNotes;
+  return {
+    activeNotes,
+    availableDevices,
+    selectedDeviceId,
+    selectDevice
+  };
 };

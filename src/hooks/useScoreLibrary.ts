@@ -39,15 +39,16 @@ export const useScoreLibrary = () => {
   // Extract title from MusicXML
   const extractTitleFromXML = (xmlString: string, fallbackName: string): string => {
     try {
-      if (!xmlString.includes('<?xml')) return fallbackName.replace(/\.[^/.]+$/, "");
+      if (!xmlString.includes('<?xml')) return fallbackName.replace(/\.[^/.]+$/, "").trim();
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(xmlString, "text/xml");
       const workTitle = xmlDoc.getElementsByTagName("work-title")[0]?.textContent;
       const movementTitle = xmlDoc.getElementsByTagName("movement-title")[0]?.textContent;
       const creditText = xmlDoc.getElementsByTagName("credit-words")[0]?.textContent;
-      return workTitle || movementTitle || creditText || fallbackName.replace(/\.[^/.]+$/, "");
+      const title = workTitle || movementTitle || creditText || fallbackName.replace(/\.[^/.]+$/, "");
+      return title.trim();
     } catch (e) {
-      return fallbackName.replace(/\.[^/.]+$/, "");
+      return fallbackName.replace(/\.[^/.]+$/, "").trim();
     }
   };
 
@@ -62,7 +63,8 @@ export const useScoreLibrary = () => {
     reader.onload = (e) => {
       const result = e.target?.result;
       if (typeof result === 'string') {
-        const title = isMxl ? file.name.replace(/\.[^/.]+$/, "") : extractTitleFromXML(result, file.name);
+        const rawTitle = isMxl ? file.name.replace(/\.[^/.]+$/, "") : extractTitleFromXML(result, file.name);
+        const title = rawTitle.trim();
         
         const newScore: SavedScore = {
           id: Math.random().toString(36).substr(2, 9),
@@ -131,11 +133,12 @@ export const useScoreLibrary = () => {
 
   const updateScoreNameFromTitle = (id: string, title: string) => {
     if (!title || title === "Untitled" || title === "Unknown") return;
+    const trimmedTitle = title.trim();
     setScoreLibrary(prev => {
       const score = prev.find(s => s.id === id);
       if (score && (score.name.includes('.') || score.name === 'Grand Staff Sample')) {
-        if (score.name !== title) {
-          return prev.map(s => s.id === id ? { ...s, name: title } : s);
+        if (score.name !== trimmedTitle) {
+          return prev.map(s => s.id === id ? { ...s, name: trimmedTitle } : s);
         }
       }
       return prev;
@@ -155,3 +158,4 @@ export const useScoreLibrary = () => {
     updateScoreNameFromTitle
   };
 };
+

@@ -8,7 +8,7 @@ interface ScoreDisplayProps {
   data: string;
   showAllLines?: boolean;
   showGuideLines?: boolean;
-  onMeasureClick?: (measure: MeasureContext, selectedMidiNotes: Set<number>, noteX: number | null, forcePlay: boolean) => void;
+  onMeasureClick?: (measure: MeasureContext | null, selectedMidiNotes: Set<number>, noteX: number | null, forcePlay: boolean) => void;
   onTitleReady?: (title: string) => void;
   onLoadingStateChange?: (isLoading: boolean) => void;
   selectedMeasureNumber?: number | null;
@@ -33,7 +33,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const [contexts, setContexts] = useState<MeasureContext[]>([]);
   const [ppu, setPpu] = useState<number>(10.0);
   const [hoveredMeasure, setHoveredMeasure] = useState<MeasureContext | null>(null);
-  const activeNotes = useMidi();
+  const { activeNotes } = useMidi();
 
   const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!containerRef.current || contexts.length === 0) return;
@@ -84,10 +84,14 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       
       // onMeasureClick に MIDIノート、X座標、および強制発音フラグを渡す
       onMeasureClick(clickedMeasure, targetMidiNotes, closestX, forcePlay);
+    } else {
+      // 楽譜外（小節外）をクリックした場合は選択解除を通知
+      onMeasureClick(null, new Set(), null, false);
     }
   };
 
   const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.stopPropagation(); // App 側の onClick (resetSelection) が呼ばれないようにする
     if (!containerRef.current || contexts.length === 0) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -277,7 +281,21 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   }, [activeNotes, contexts, ppu, showAllLines, selectedMeasureNumber, showGuideLines]);
 
   return (
-    <div style={{ position: 'relative', width: '100%', backgroundColor: '#fff', cursor: 'pointer' }} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} onClick={handleClick}>
+    <div 
+      style={{ 
+        position: 'relative', 
+        width: '100%', 
+        backgroundColor: '#fff', 
+        cursor: 'pointer',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        MozUserSelect: 'none',
+        msUserSelect: 'none'
+      }} 
+      onMouseMove={handleMouseMove} 
+      onMouseLeave={handleMouseLeave} 
+      onClick={handleClick}
+    >
       <div ref={containerRef} style={{ width: '100%' }} />
       <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}>
         {hoveredMeasure && <rect x={hoveredMeasure.x} y={hoveredMeasure.y} width={hoveredMeasure.width} height={hoveredMeasure.height} fill="rgba(25, 118, 210, 0.05)" stroke="rgba(25, 118, 210, 0.1)" strokeWidth="1" />} 

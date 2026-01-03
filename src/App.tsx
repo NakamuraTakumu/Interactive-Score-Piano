@@ -1,5 +1,5 @@
 import { useState, useCallback, memo, useEffect } from 'react'
-import { Box, Container, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Backdrop, CircularProgress, Stack } from '@mui/material'
+import { Box, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Backdrop, CircularProgress, Stack } from '@mui/material'
 import ScoreDisplay from './components/ScoreDisplay'
 import PianoKeyboard from './components/PianoKeyboard'
 import ControlPanel from './components/ControlPanel'
@@ -24,7 +24,7 @@ const theme = createTheme({
 const MemoizedScoreDisplay = memo(ScoreDisplay);
 
 function App() {
-  const activeNotes = useMidi();
+  const { activeNotes, availableDevices, selectedDeviceId, selectDevice } = useMidi();
   const { settings, updateSetting, showAllLines, showGuideLines } = usePianoSettings();
   const { 
     isAudioStarted, isSamplesLoaded, startAudio, playNotes 
@@ -85,7 +85,12 @@ function App() {
     if (currentScoreId === id) resetSelection();
   };
 
-  const handleMeasureClick = useCallback((measure: MeasureContext, midiNotes: Set<number>, noteX: number | null, forcePlay: boolean = false) => {
+  const handleMeasureClick = useCallback((measure: MeasureContext | null, midiNotes: Set<number>, noteX: number | null, forcePlay: boolean = false) => {
+    if (!measure) {
+      resetSelection();
+      return;
+    }
+
     const isDifferentX = noteX !== selectedNoteX;
     const isDifferentMidi = midiNotes.size !== selectedMidiNotes.size || 
                             Array.from(midiNotes).some(n => !selectedMidiNotes.has(n));
@@ -97,7 +102,7 @@ function App() {
       setSelectedNoteX(noteX);
       if (midiNotes.size > 0) playNotes(Array.from(midiNotes));
     }
-  }, [playNotes, selectedNoteX, selectedMidiNotes]);
+  }, [playNotes, selectedNoteX, selectedMidiNotes, resetSelection]);
 
   const handleTitleReady = useCallback((title: string) => {
     updateScoreNameFromTitle(currentScoreId, title);
@@ -130,42 +135,62 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', pb: '140px' }}>
-        <Container maxWidth="lg">
-          <Box sx={{ my: 4 }}>
-            <Typography variant="h4" component="h1" gutterBottom align="center">
-              Interactive Score Piano
-            </Typography>
-            
-            <ControlPanel 
-              scoreLibrary={scoreLibrary}
-              currentScoreId={currentScoreId}
-              onScoreChange={onScoreChangeWrapper}
-              onOpenEditDialog={handleOpenEditDialog}
-              onDeleteScore={handleDeleteScoreWrapper}
-              settings={settings}
-              updateSetting={updateSetting}
-              isAudioStarted={isAudioStarted}
-              onStartAudio={startAudio}
-              onFileUpload={(e) => handleFileUpload(e, resetSelection)}
-              isSamplesLoaded={isSamplesLoaded}
-            />
+      <Box 
+        sx={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          minHeight: '100vh', 
+          pb: '140px',
+          bgcolor: '#f5f5f5' // 背景を少しグレーにしてPaperを際立たせる
+        }}
+        onClick={resetSelection}
+      >
+        <Box sx={{ px: { xs: 1, sm: 2, md: 4 }, py: 2, width: '100%' }}>
+          <Typography variant="h5" component="h1" gutterBottom align="center" sx={{ fontWeight: 'bold', mb: 2 }}>
+            Interactive Score Piano
+          </Typography>
+          
+          <ControlPanel 
+            scoreLibrary={scoreLibrary}
+            currentScoreId={currentScoreId}
+            onScoreChange={onScoreChangeWrapper}
+            onOpenEditDialog={handleOpenEditDialog}
+            onDeleteScore={handleDeleteScoreWrapper}
+            settings={settings}
+            updateSetting={updateSetting}
+            isAudioStarted={isAudioStarted}
+            onStartAudio={startAudio}
+            onFileUpload={(e) => handleFileUpload(e, resetSelection)}
+            isSamplesLoaded={isSamplesLoaded}
+            availableMidiDevices={availableDevices}
+            selectedMidiDeviceId={selectedDeviceId}
+            onMidiDeviceChange={selectDevice}
+          />
 
-            <Paper elevation={3} sx={{ p: 2, minHeight: '600px', position: 'relative' }}>
-              <MemoizedScoreDisplay 
-                data={scoreData} 
-                showAllLines={showAllLines} 
-                showGuideLines={showGuideLines}
-                onMeasureClick={handleMeasureClick}
-                onTitleReady={handleTitleReady}
-                onLoadingStateChange={handleLoadingStateChange}
-                selectedMeasureNumber={selectedMeasure?.measureNumber}
-                selectedMidiNotes={selectedMidiNotes}
-                selectedNoteX={selectedNoteX}
-              />
-            </Paper>
-          </Box>
-        </Container>
+          <Paper 
+            elevation={2} 
+            sx={{ 
+              p: 1, 
+              minHeight: '70vh', 
+              position: 'relative',
+              width: '100%',
+              overflow: 'hidden'
+            }}
+            onClick={resetSelection}
+          >
+            <MemoizedScoreDisplay 
+              data={scoreData} 
+              showAllLines={showAllLines} 
+              showGuideLines={showGuideLines}
+              onMeasureClick={handleMeasureClick}
+              onTitleReady={handleTitleReady}
+              onLoadingStateChange={handleLoadingStateChange}
+              selectedMeasureNumber={selectedMeasure?.measureNumber}
+              selectedMidiNotes={selectedMidiNotes}
+              selectedNoteX={selectedNoteX}
+            />
+          </Paper>
+        </Box>
         
         <ScoreRenameDialog 
           open={editDialogOpen}
