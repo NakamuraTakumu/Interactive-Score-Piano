@@ -15,15 +15,42 @@ export const useMidi = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('all');
   const [midiAccess, setMidiAccess] = useState<MIDIAccess | null>(null);
 
+  // 初回のみMIDIアクセス権を取得
   useEffect(() => {
+    if (navigator.requestMIDIAccess) {
+      navigator.requestMIDIAccess().then(
+        (access) => {
+          setMidiAccess(access);
+        },
+        (err) => {
+          console.warn('MIDI access failed:', err);
+        }
+      );
+    }
+  }, []);
+
+  // デバイスリストの更新とメッセージ購読の管理
+  useEffect(() => {
+    if (!midiAccess) return;
+
     const handleMidiMessage = (message: any) => {
       const [command, note, velocity] = message.data;
       
-      // Note On (0x90) and Note Off (0x80)
-      if (command >= 0x90 && command <= 0x9F && velocity > 0) {
-        setActiveNotes(prev => new Set(prev).add(note));
-      } else if ((command >= 0x80 && command <= 0x8F) || (command >= 0x90 && command <= 0x9F && velocity === 0)) {
-        setActiveNotes(prev => {
+      // Note On: 0x90 to 0x9F (144-159)
+      if (command >= 144 && command <= 159) {
+        if (velocity > 0) {
+          setActiveNotes((prev) => new Set(prev).add(note));
+        } else {
+          setActiveNotes((prev) => {
+            const next = new Set(prev);
+            next.delete(note);
+            return next;
+          });
+        }
+      }
+      // Note Off: 0x80 to 0x8F (128-143)
+      else if (command >= 128 && command <= 143) {
+        setActiveNotes((prev) => {
           const next = new Set(prev);
           next.delete(note);
           return next;
@@ -31,9 +58,9 @@ export const useMidi = () => {
       }
     };
 
-    const updateDevices = (access: MIDIAccess) => {
+    const updateDevices = () => {
       const devices: MidiDevice[] = [];
-      access.inputs.forEach((input) => {
+      midiAccess.inputs.forEach((input) => {
         devices.push({
           id: input.id,
           name: input.name || 'Unknown Device',
@@ -43,10 +70,9 @@ export const useMidi = () => {
       setAvailableDevices(devices);
     };
 
-    const setupInputs = (access: MIDIAccess, deviceId: string) => {
-      access.inputs.forEach((input) => {
-        // 全てのデバイス、または選択されたIDのデバイスのみ購読
-        if (deviceId === 'all' || input.id === deviceId) {
+    const setupInputs = () => {
+      midiAccess.inputs.forEach((input) => {
+        if (selectedDeviceId === 'all' || input.id === selectedDeviceId) {
           input.onmidimessage = handleMidiMessage;
         } else {
           input.onmidimessage = null;
@@ -54,36 +80,23 @@ export const useMidi = () => {
       });
     };
 
-    const onMIDISuccess = (access: MIDIAccess) => {
-      setMidiAccess(access);
-      updateDevices(access);
-      setupInputs(access, selectedDeviceId);
+    // 初期実行
+    updateDevices();
+    setupInputs();
 
-      access.onstatechange = () => {
-        updateDevices(access);
-        setupInputs(access, selectedDeviceId);
-      };
+    // 接続状態の変化を監視
+    midiAccess.onstatechange = () => {
+      updateDevices();
+      setupInputs();
     };
-
-    const onMIDIFailure = (err: any) => {
-      console.warn('MIDI access failed:', err);
-    };
-
-    if (navigator.requestMIDIAccess) {
-      navigator.requestMIDIAccess({ sysex: false }).then(onMIDISuccess, onMIDIFailure);
-    } else {
-      console.warn('Web MIDI API is not supported in this browser.');
-    }
 
     return () => {
-      if (midiAccess) {
-        midiAccess.inputs.forEach((input) => {
-          input.onmidimessage = null;
-        });
-        midiAccess.onstatechange = null;
-      }
+      midiAccess.inputs.forEach((input) => {
+        input.onmidimessage = null;
+      });
+      midiAccess.onstatechange = null;
     };
-  }, [selectedDeviceId, midiAccess]);
+  }, [midiAccess, selectedDeviceId]);
 
   const selectDevice = useCallback((id: string) => {
     setSelectedDeviceId(id);
