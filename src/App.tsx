@@ -192,6 +192,7 @@ function App() {
               selectedMidiNotes={selectedMidiNotes}
               selectedNoteX={selectedNoteX}
               activeNotes={activeNotes}
+              highlightBlackKeys={settings.highlightBlackKeys}
             />
           </Paper>
         </Box>

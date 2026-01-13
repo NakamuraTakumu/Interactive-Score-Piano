@@ -14,6 +14,7 @@ interface ScoreDisplayProps {
   selectedMidiNotes?: Set<number>;
   selectedNoteX?: number | null;
   activeNotes?: Set<number>;
+  highlightBlackKeys?: boolean;
 }
 
 const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
@@ -26,7 +27,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   selectedMeasureNumber = null,
   selectedMidiNotes = new Set(),
   selectedNoteX = null,
-  activeNotes = new Set()
+  activeNotes = new Set(),
+  highlightBlackKeys = true
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
@@ -197,7 +199,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
                            selectedNoteX !== null && 
                            details.some(d => Math.abs(d.x - selectedNoteX) < 1);
 
-        const defaultColor = isSelected ? '#4caf50' : '#000000';
+        // Calculate default color for the group (chord)
+        let baseColor = isSelected ? '#4caf50' : '#000000';
 
         // 1. VexFlow の StaveNote オブジェクトを取得
         const vf = details[0]?.graphicalNote?.vfnote;
@@ -215,20 +218,21 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
             el.style.stroke = color;
           };
 
+          const isBlackKey = (midi: number) => [1, 3, 6, 8, 10].includes(midi % 12);
+
           // Determine if all notes are being played
           const allActive = details.length > 0 && details.every((d: any) => activeNotes.has(d.midi));
 
           if (allActive) {
-            // A. 全ての音が弾かれている場合：和音全体（符頭、ステム、連桁などすべて）を赤くする
-            // 音符の色変えは常に有効にする
+            // A. 全ての音が弾かれている場合：和音全体を赤くする
             const color = '#ff0000';
             gveSvgGroup.querySelectorAll('path, ellipse').forEach(el => setCol(el as SVGElement, color));
           } else {
-            // B. 一部の音だけが弾かれている、または何も弾かれていない場合
-            // 1. まず全体をデフォルト色（黒または選択色の緑）にリセット
-            gveSvgGroup.querySelectorAll('path, ellipse').forEach(el => setCol(el as SVGElement, defaultColor));
+            // B. 個別の音または未演奏の状態
+            // まず全体（符幹など）をベース色でリセット
+            gveSvgGroup.querySelectorAll('path, ellipse').forEach(el => setCol(el as SVGElement, baseColor));
 
-            // 2. 符頭要素（NoteHead）のみを特定して個別着色
+            // 符頭要素（NoteHead）を個別に着色
             const noteGroup = gveSvgGroup.querySelector('.vf-note');
             if (noteGroup) {
               const heads = Array.from(noteGroup.querySelectorAll('path, ellipse')).filter(el => 
@@ -236,15 +240,23 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
               );
 
               details.forEach((detail: any) => {
-                let color = defaultColor;
-                if (activeNotes.has(detail.midi)) {
-                  color = '#ff0000';
-                } else if (isSelected && selectedMidiNotes.has(detail.midi)) {
-                  color = '#4caf50';
+                let noteColor = baseColor;
+                
+                // --- Highlight Black Keys Logic ---
+                if (highlightBlackKeys && !isSelected && isBlackKey(detail.midi)) {
+                  // keySig >= 0 (Sharp/Natural) -> Orange (Right side of white key)
+                  // keySig < 0 (Flat) -> Light Blue (Left side of white key)
+                  noteColor = ctx.keySig >= 0 ? '#fb8c00' : '#03a9f4';
                 }
 
-                if (color !== defaultColor && heads.length > detail.index) {
-                  setCol(heads[detail.index] as SVGElement, color);
+                if (activeNotes.has(detail.midi)) {
+                  noteColor = '#ff0000';
+                } else if (isSelected && selectedMidiNotes.has(detail.midi)) {
+                  noteColor = '#4caf50';
+                }
+
+                if (noteColor !== baseColor && heads.length > detail.index) {
+                  setCol(heads[detail.index] as SVGElement, noteColor);
                 }
               });
             }

@@ -9,7 +9,8 @@ const DEFAULT_SETTINGS: PianoSettings = {
   reverb: 0.3,
   transpose: 0,
   sustainEnabled: false,
-  velocitySensitivity: 0.8
+  velocitySensitivity: 0.8,
+  highlightBlackKeys: true
 };
 
 export const usePianoSettings = () => {

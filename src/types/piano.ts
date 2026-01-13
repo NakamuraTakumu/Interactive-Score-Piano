@@ -17,6 +17,7 @@ export interface PianoSettings {
   transpose: number;
   sustainEnabled: boolean;
   velocitySensitivity: number;
+  highlightBlackKeys: boolean;
 }
 
 export interface MeasureContext {

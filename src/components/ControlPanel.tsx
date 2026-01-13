@@ -207,7 +207,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             <Divider />
 
             {/* Display Toggles */}
-            <Stack direction="row" spacing={2}>
+            <Stack direction="row" spacing={2} flexWrap="wrap">
               <FormControlLabel
                 control={<Switch size="small" checked={settings.showAllLines} onChange={(e) => updateSetting('showAllLines', e.target.checked)} />}
                 label={<Typography variant="body2">All Lines</Typography>}
@@ -215,6 +215,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               <FormControlLabel
                 control={<Switch size="small" checked={settings.showGuideLines} onChange={(e) => updateSetting('showGuideLines', e.target.checked)} />}
                 label={<Typography variant="body2">Guides</Typography>}
+              />
+              <FormControlLabel
+                control={<Switch size="small" checked={settings.highlightBlackKeys} onChange={(e) => updateSetting('highlightBlackKeys', e.target.checked)} />}
+                label={<Typography variant="body2" sx={{ fontWeight: 'medium' }}>Black Key Color</Typography>}
               />
             </Stack>
 
