@@ -26,12 +26,13 @@ interface ControlPanelProps {
   settings: PianoSettings;
   updateSetting: <K extends keyof PianoSettings>(key: K, value: PianoSettings[K]) => void;
   isAudioStarted: boolean;
-  onStartAudio: () => void;
-  onFileUpload: (event: ChangeEvent<HTMLInputElement>) => void;
+  onStartAudio: () => Promise<void>;
+  onFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
   isSamplesLoaded: boolean;
-  availableMidiDevices: MidiDevice[];
+  availableMidiDevices: { id: string, name: string }[];
   selectedMidiDeviceId: string;
   onMidiDeviceChange: (id: string) => void;
+  activeNotes?: Set<number>;
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -48,7 +49,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   isSamplesLoaded,
   availableMidiDevices,
   selectedMidiDeviceId,
-  onMidiDeviceChange
+  onMidiDeviceChange,
+  activeNotes = new Set()
 }) => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
 
@@ -105,6 +107,14 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               <TuneIcon />
             </IconButton>
           </Tooltip>
+
+          {activeNotes.size > 0 && (
+            <Box sx={{ ml: 1, px: 1.5, py: 0.5, bgcolor: 'action.hover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 'bold', color: 'primary.main' }}>
+                MIDI: {Array.from(activeNotes).sort((a, b) => a - b).join(', ')}
+              </Typography>
+            </Box>
+          )}
         </Box>
         
         <Stack direction="row" spacing={3} alignItems="center">

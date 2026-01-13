@@ -11,7 +11,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
   const graphicSheet = osmd.GraphicSheet;
   if (!graphicSheet || !osmd.Sheet) return [];
   const contexts: MeasureContext[] = [];
-  const staffStates = new Map<number, { clef: string, key: number, octaveShift: number }>();
+  const staffStates = new Map<number, { clef: string, key: number, mode: string, octaveShift: number }>();
 
   // 高速化のため、Stavesのインデックスを事前にマップ化
   const staffIndexMap = new Map<any, number>();
@@ -25,7 +25,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
         const staffIdx = staffIndexMap.get(parentStaff) ?? -1;
 
         if (!staffStates.has(staffId)) {
-          staffStates.set(staffId, { clef: (staffId % 2 !== 0) ? 'F' : 'G', key: 0, octaveShift: 0 });
+          staffStates.set(staffId, { clef: (staffId % 2 !== 0) ? 'F' : 'G', key: 0, mode: 'major', octaveShift: 0 });
         }
         const state = staffStates.get(staffId)!;
 
@@ -45,6 +45,9 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
                 source.FirstInstructionsStaffEntries[staffIdx].Instructions.forEach(instr => {
                   if (instr instanceof KeyInstruction) {
                     state.key = instr.Key;
+                    // @ts-ignore: Accessing Mode if available, assuming private or typed enum
+                    if (instr.Mode !== undefined) state.mode = instr.Mode === 0 ? 'major' : (instr.Mode === 1 ? 'minor' : 'major'); 
+                    // Note: OSMD KeyModeEnum: Major=0, Minor=1, etc.
                   }
                 });
             }
@@ -56,6 +59,8 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
                     entry.Instructions.forEach(instr => {
                         if (instr instanceof KeyInstruction) {
                             state.key = instr.Key;
+                             // @ts-ignore
+                            if (instr.Mode !== undefined) state.mode = instr.Mode === 0 ? 'major' : (instr.Mode === 1 ? 'minor' : 'major');
                         }
                     });
                 }
@@ -117,6 +122,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
             staffY: absStaffPos.y * pixelPerUnit,
             clefType: state.clef as ClefType,
             keySig: state.key,
+            keyMode: state.mode,
             minMidi,
             maxMidi,
             octaveShift: state.octaveShift,
@@ -164,17 +170,34 @@ export const calculateYForMidi = (midi: number, ctx: MeasureContext, ppu: number
   const displayMidi = midi + ctx.octaveShift;
   const pc = ((displayMidi % 12) + 12) % 12;
   const octave = Math.floor(displayMidi / 12);
-  const stepMap = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+  
+  // Choose mapping based on Key Signature
+  // Flats (keySig < 0): Map black keys to the upper note (e.g. Eb -> E position)
+  // Sharps (keySig >= 0): Map black keys to the lower note (e.g. F# -> F position)
+  const stepMapSharps = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+  const stepMapFlats  = [0, 1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6];
+  const stepMap = ctx.keySig < 0 ? stepMapFlats : stepMapSharps;
+
   const step = octave * 7 + stepMap[pc];
   const baselineStep = ctx.clefType === 'F' ? 25 : 37;
   const bottomLineY = ctx.staffY + 4 * ppu;
   return bottomLineY - (step - baselineStep) * space;
 };
 
-export const isDiatonic = (midi: number, fifths: number): boolean => {
+export const isDiatonic = (midi: number, fifths: number, mode: string = 'major'): boolean => {
   const pc = ((midi % 12) + 12) % 12;
   const circlePos = (pc * 7) % 12;
   const start = (fifths - 1 + 120) % 12;
   const normalizedPos = (circlePos - start + 12) % 12;
-  return normalizedPos >= 0 && normalizedPos <= 6;
+  
+  if (normalizedPos >= 0 && normalizedPos <= 6) return true;
+  
+  // Minor Key Extensions for Harmonic/Melodic Minor
+  if (mode === 'minor') {
+    // normalizedPos 7 corresponds to raised 6th (e.g., F# in A minor)
+    // normalizedPos 9 corresponds to raised 7th (e.g., G# in A minor)
+    if (normalizedPos === 7 || normalizedPos === 9) return true;
+  }
+  
+  return false;
 };

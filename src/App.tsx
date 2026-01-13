@@ -24,11 +24,13 @@ const theme = createTheme({
 const MemoizedScoreDisplay = memo(ScoreDisplay);
 
 function App() {
-  const { activeNotes, availableDevices, selectedDeviceId, selectDevice } = useMidi();
   const { settings, updateSetting, showAllLines, showGuideLines } = usePianoSettings();
+  
   const { 
-    isAudioStarted, isSamplesLoaded, startAudio, playNotes 
+    isAudioStarted, isSamplesLoaded, startAudio, playNotes, workletNode
   } = usePianoSound(settings, updateSetting);
+
+  const { activeNotes, availableDevices, selectedDeviceId, selectDevice } = useMidi(workletNode);
   const { keepAwake } = useWakeLock();
   
   // Custom Hooks
@@ -165,6 +167,7 @@ function App() {
             availableMidiDevices={availableDevices}
             selectedMidiDeviceId={selectedDeviceId}
             onMidiDeviceChange={selectDevice}
+            activeNotes={activeNotes}
           />
 
           <Paper 
@@ -188,6 +191,7 @@ function App() {
               selectedMeasureNumber={selectedMeasure?.measureNumber}
               selectedMidiNotes={selectedMidiNotes}
               selectedNoteX={selectedNoteX}
+              activeNotes={activeNotes}
             />
           </Paper>
         </Box>
@@ -224,3 +228,4 @@ function App() {
 }
 
 export default App;
+

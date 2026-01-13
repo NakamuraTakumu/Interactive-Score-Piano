@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 export interface MidiDevice {
   id: string;
@@ -8,104 +8,117 @@ export interface MidiDevice {
 
 /**
  * Hook to manage currently pressed MIDI note numbers and MIDI devices
+ * Receives MIDI events from the Main Thread (Web MIDI API) and forwards to AudioWorklet
  */
-export const useMidi = () => {
+export const useMidi = (workletNode: AudioWorkletNode | null = null) => {
   const [activeNotes, setActiveNotes] = useState<Set<number>>(new Set());
   const [availableDevices, setAvailableDevices] = useState<MidiDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('all');
-  const [midiAccess, setMidiAccess] = useState<MIDIAccess | null>(null);
 
-  // 初回のみMIDIアクセス権を取得
-  useEffect(() => {
-    if (navigator.requestMIDIAccess) {
-      navigator.requestMIDIAccess().then(
-        (access) => {
-          setMidiAccess(access);
-        },
-        (err) => {
-          console.warn('MIDI access failed:', err);
-        }
-      );
-    }
-  }, []);
+  const midiAccessRef = useRef<any>(null); // Use any for MIDIAccess to avoid type issues
 
-  // デバイスリストの更新とメッセージ購読の管理
-  useEffect(() => {
-    if (!midiAccess) return;
+  // Handle MIDI Message
+  const handleMidiMessage = useCallback((event: any) => {
+    if (!event.data) return;
+    const [command, data1, data2] = event.data;
+    const timestamp = event.timeStamp;
 
-    const handleMidiMessage = (message: any) => {
-      const [command, note, velocity] = message.data;
-      
-      // Note On: 0x90 to 0x9F (144-159)
-      if (command >= 144 && command <= 159) {
-        if (velocity > 0) {
-          setActiveNotes((prev) => new Set(prev).add(note));
-        } else {
-          setActiveNotes((prev) => {
-            const next = new Set(prev);
-            next.delete(note);
-            return next;
-          });
-        }
+    // 1. Forward to AudioWorklet for low-latency sound
+    if (workletNode) {
+      // Note On
+      if (command >= 0x90 && command <= 0x9F && data2 > 0) {
+        workletNode.port.postMessage({ type: 'note-on', payload: { midi: data1, velocity: data2 / 127 } });
+      } 
+      // Note Off
+      else if ((command >= 0x80 && command <= 0x8F) || (command >= 0x90 && command <= 0x9F && data2 === 0)) {
+        workletNode.port.postMessage({ type: 'note-off', payload: { midi: data1 } });
       }
-      // Note Off: 0x80 to 0x8F (128-143)
-      else if (command >= 128 && command <= 143) {
+      // Sustain Pedal (CC 64)
+      else if (command === 0xB0 && data1 === 64) {
+        workletNode.port.postMessage({ type: 'sustain', payload: { active: data2 >= 64 } });
+      }
+    }
+
+    // 2. Update UI State (Active Notes)
+    // Note On
+    if (command >= 144 && command <= 159) {
+      if (data2 > 0) {
+        setActiveNotes((prev) => new Set(prev).add(data1));
+      } else {
         setActiveNotes((prev) => {
           const next = new Set(prev);
-          next.delete(note);
+          next.delete(data1);
           return next;
         });
       }
-    };
-
-    const updateDevices = () => {
-      const devices: MidiDevice[] = [];
-      midiAccess.inputs.forEach((input) => {
-        devices.push({
-          id: input.id,
-          name: input.name || 'Unknown Device',
-          manufacturer: input.manufacturer ?? undefined
-        });
+    }
+    // Note Off
+    else if (command >= 128 && command <= 143) {
+      setActiveNotes((prev) => {
+        const next = new Set(prev);
+        next.delete(data1);
+        return next;
       });
-      setAvailableDevices(devices);
-    };
+    }
+  }, [workletNode]);
 
-    const setupInputs = () => {
-      midiAccess.inputs.forEach((input) => {
-        if (selectedDeviceId === 'all' || input.id === selectedDeviceId) {
-          input.onmidimessage = handleMidiMessage;
-        } else {
-          input.onmidimessage = null;
-        }
+  // Refresh Device List and Re-attach Listeners
+  const refreshDevices = useCallback(() => {
+    if (!midiAccessRef.current) return;
+    
+    const devices: MidiDevice[] = [];
+    for (const input of midiAccessRef.current.inputs.values()) {
+      devices.push({
+        id: input.id,
+        name: input.name,
+        manufacturer: input.manufacturer
       });
-    };
+    }
+    setAvailableDevices(devices);
 
-    // 初期実行
-    updateDevices();
-    setupInputs();
-
-    // 接続状態の変化を監視
-    midiAccess.onstatechange = () => {
-      updateDevices();
-      setupInputs();
-    };
-
-    return () => {
-      midiAccess.inputs.forEach((input) => {
+    // Re-attach listeners based on selection
+    for (const input of midiAccessRef.current.inputs.values()) {
+      if (selectedDeviceId === 'all' || input.id === selectedDeviceId) {
+        input.onmidimessage = handleMidiMessage;
+      } else {
         input.onmidimessage = null;
-      });
-      midiAccess.onstatechange = null;
-    };
-  }, [midiAccess, selectedDeviceId]);
+      }
+    }
+  }, [selectedDeviceId, handleMidiMessage]);
 
-  const selectDevice = useCallback((id: string) => {
-    setSelectedDeviceId(id);
-  }, []);
+  // Init MIDI Access
+  useEffect(() => {
+    if (!navigator.requestMIDIAccess) {
+      console.warn('Web MIDI API not supported in this browser.');
+      return;
+    }
+
+    navigator.requestMIDIAccess().then((access) => {
+      midiAccessRef.current = access;
+      console.log('MIDI Access granted in Main Thread');
+      
+      refreshDevices();
+      
+      access.onstatechange = (e: any) => {
+        refreshDevices();
+      };
+    }).catch(err => {
+      console.error('Failed to get MIDI access', err);
+    });
+
+  }, []); // Run once on mount
+
+  // Update listeners when device selection changes or midiAccess is ready
+  useEffect(() => {
+    if (midiAccessRef.current) {
+      refreshDevices();
+    }
+  }, [selectedDeviceId, refreshDevices]);
 
   return {
     activeNotes,
     availableDevices,
     selectedDeviceId,
-    selectDevice
+    selectDevice: setSelectedDeviceId
   };
 };

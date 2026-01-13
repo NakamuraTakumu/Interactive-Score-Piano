@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
-import { useMidi } from '../hooks/useMidi';
 import { MeasureContext } from '../types/piano';
 import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint } from '../utils/osmdCoordinates';
 
@@ -14,6 +13,7 @@ interface ScoreDisplayProps {
   selectedMeasureNumber?: number | null;
   selectedMidiNotes?: Set<number>;
   selectedNoteX?: number | null;
+  activeNotes?: Set<number>;
 }
 
 const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
@@ -25,7 +25,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   onLoadingStateChange,
   selectedMeasureNumber = null,
   selectedMidiNotes = new Set(),
-  selectedNoteX = null
+  selectedNoteX = null,
+  activeNotes = new Set()
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
@@ -33,7 +34,6 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const [contexts, setContexts] = useState<MeasureContext[]>([]);
   const [ppu, setPpu] = useState<number>(10.0);
   const [hoveredMeasure, setHoveredMeasure] = useState<MeasureContext | null>(null);
-  const { activeNotes } = useMidi();
 
   const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!containerRef.current || contexts.length === 0) return;
@@ -271,7 +271,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         Array.from(activeNotes).forEach(note => {
           if (showAllLines || (note >= minLimit && note <= maxLimit)) {
             const y = calculateYForMidi(note, ctx, ppu);
-            const diatonic = isDiatonic(note, ctx.keySig);
+            const diatonic = isDiatonic(note, ctx.keySig, ctx.keyMode);
             lines.push(<line key={`l-${ctx.systemId}-${ctx.measureNumber}-${ctx.staffId}-${note}`} x1={ctx.x + 2} y1={y} x2={ctx.x + ctx.width - 2} y2={y} stroke={diatonic ? "red" : "#2196f3"} strokeWidth="3" strokeDasharray={diatonic ? "none" : "4 2"} opacity="0.8" />);
           }
         });
