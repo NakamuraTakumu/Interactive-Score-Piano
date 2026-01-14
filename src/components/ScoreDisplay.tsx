@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
+import { OpenSheetMusicDisplay, TransposeCalculator } from 'opensheetmusicdisplay';
 import { MeasureContext } from '../types/piano';
 import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint } from '../utils/osmdCoordinates';
 
@@ -15,6 +15,7 @@ interface ScoreDisplayProps {
   selectedNoteX?: number | null;
   activeNotes?: Set<number>;
   highlightBlackKeys?: boolean;
+  visualTranspose?: number;
 }
 
 const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
@@ -28,11 +29,13 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   selectedMidiNotes = new Set(),
   selectedNoteX = null,
   activeNotes = new Set(),
-  highlightBlackKeys = true
+  highlightBlackKeys = true,
+  visualTranspose = 0
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const lastLoadedDataRef = useRef<string | null>(null);
+  const lastVisualTransposeRef = useRef<number>(visualTranspose);
   const [contexts, setContexts] = useState<MeasureContext[]>([]);
   const [ppu, setPpu] = useState<number>(10.0);
   const [hoveredMeasure, setHoveredMeasure] = useState<MeasureContext | null>(null);
@@ -122,8 +125,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     const osmd = osmdRef.current;
     if (!osmd || !data) return;
     
-    // データが実際に変更された場合のみ重い処理を実行
-    if (data === lastLoadedDataRef.current) return;
+    // データも移調設定も変更がない場合はスキップ
+    if (data === lastLoadedDataRef.current && visualTranspose === lastVisualTransposeRef.current) return;
 
     const update = async () => {
       try {
@@ -133,17 +136,28 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         // メインスレッドを一旦解放してローディング表示を確実に出す
         await new Promise(resolve => setTimeout(resolve, 10));
 
+        // Always reload data to ensure clean state for transposition
         await osmd.load(data);
         
-        // レンダリングオプションの再適用（loadでリセットされる場合があるため）
+        // レンダリングオプションの再適用
         osmd.setOptions({
           drawLyrics: false,
           drawFingerings: false,
           drawSlurs: false,
         });
 
+        // Apply visual transpose
+        if (visualTranspose !== 0) {
+            if (!osmd.TransposeCalculator) {
+                osmd.TransposeCalculator = new TransposeCalculator();
+            }
+            osmd.Sheet.Transpose = visualTranspose;
+            osmd.updateGraphic(); 
+        }
+
         osmd.render();
         lastLoadedDataRef.current = data;
+        lastVisualTransposeRef.current = visualTranspose;
 
         const pixelPerUnit = getPixelPerUnit(osmd, containerRef.current!);
         const ctxs = extractMeasureContexts(osmd, pixelPerUnit);
@@ -161,7 +175,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       }
     };
     update();
-  }, [data, onTitleReady, onLoadingStateChange]);
+  }, [data, onTitleReady, onLoadingStateChange, visualTranspose]);
 
   useEffect(() => {
     if (!containerRef.current || !osmdRef.current) return;

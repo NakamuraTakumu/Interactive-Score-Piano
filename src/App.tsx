@@ -193,6 +193,7 @@ function App() {
               selectedNoteX={selectedNoteX}
               activeNotes={activeNotes}
               highlightBlackKeys={settings.highlightBlackKeys}
+              visualTranspose={settings.visualTranspose}
             />
           </Paper>
         </Box>

@@ -53,6 +53,22 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   activeNotes = new Set()
 }) => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
+  
+  // Local state for smooth slider interaction
+  const [localSettings, setLocalSettings] = useState<PianoSettings>(settings);
+
+  // Sync local settings when external settings change (e.g. initial load)
+  React.useEffect(() => {
+    setLocalSettings(settings);
+  }, [settings]);
+
+  const handleSliderChange = (key: keyof PianoSettings) => (_: Event, newValue: number | number[]) => {
+    setLocalSettings(prev => ({ ...prev, [key]: newValue as number }));
+  };
+
+  const handleSliderCommit = (key: keyof PianoSettings) => (_: Event | React.SyntheticEvent, newValue: number | number[]) => {
+    updateSetting(key, newValue as number);
+  };
 
   const handleSettingsClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     setAnchorEl(event.currentTarget);
@@ -122,8 +138,9 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             <VolumeUpIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 20 }} />
             <Slider 
               size="small"
-              value={settings.volume} 
-              onChange={(_, v) => updateSetting('volume', v as number)} 
+              value={localSettings.volume} 
+              onChange={handleSliderChange('volume')}
+              onChangeCommitted={handleSliderCommit('volume')}
               min={-60} max={10} 
               onMouseDown={onStartAudio}
             />
@@ -228,18 +245,32 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             <Box>
               <Typography variant="caption" color="text.secondary">Reverb (Hall Ambience)</Typography>
               <Slider 
-                size="small" value={settings.reverb} 
-                onChange={(_, v) => updateSetting('reverb', v as number)} 
+                size="small" value={localSettings.reverb} 
+                onChange={handleSliderChange('reverb')}
+                onChangeCommitted={handleSliderCommit('reverb')}
                 min={0} max={1} step={0.01}
                 valueLabelDisplay="auto"
               />
             </Box>
 
             <Box>
-              <Typography variant="caption" color="text.secondary">Transpose (Half-steps)</Typography>
+              <Typography variant="caption" color="text.secondary">Audio Transpose (Half-steps)</Typography>
               <Slider 
-                size="small" value={settings.transpose} 
-                onChange={(_, v) => updateSetting('transpose', v as number)} 
+                size="small" value={localSettings.transpose} 
+                onChange={handleSliderChange('transpose')}
+                onChangeCommitted={handleSliderCommit('transpose')}
+                min={-12} max={12} step={1}
+                marks={[{value: 0, label: '0'}]}
+                valueLabelDisplay="auto"
+              />
+            </Box>
+
+            <Box>
+              <Typography variant="caption" color="text.secondary">Visual Transpose (Sheet Music)</Typography>
+              <Slider 
+                size="small" value={localSettings.visualTranspose} 
+                onChange={handleSliderChange('visualTranspose')}
+                onChangeCommitted={handleSliderCommit('visualTranspose')}
                 min={-12} max={12} step={1}
                 marks={[{value: 0, label: '0'}]}
                 valueLabelDisplay="auto"
@@ -249,8 +280,9 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             <Box>
               <Typography variant="caption" color="text.secondary">Velocity Sensitivity</Typography>
               <Slider 
-                size="small" value={settings.velocitySensitivity} 
-                onChange={(_, v) => updateSetting('velocitySensitivity', v as number)} 
+                size="small" value={localSettings.velocitySensitivity} 
+                onChange={handleSliderChange('velocitySensitivity')}
+                onChangeCommitted={handleSliderCommit('velocitySensitivity')}
                 min={0} max={1} step={0.1}
                 valueLabelDisplay="auto"
               />

@@ -15,6 +15,7 @@ export interface PianoSettings {
   volume: number;
   reverb: number;
   transpose: number;
+  visualTranspose: number;
   sustainEnabled: boolean;
   velocitySensitivity: number;
   highlightBlackKeys: boolean;
