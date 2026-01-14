@@ -1,23 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { SoundType, PianoSettings } from '../types/piano';
+// @ts-ignore - Vite special import
+import pianoProcessorUrl from '../workers/pianoProcessor?worker&url';
 
 /**
-
  * Hook to play synthesized or sampled piano sounds with low latency using AudioWorklet and Web Workers
-
  */
-
 export const usePianoSound = (settings: PianoSettings, onSettingsChange: <K extends keyof PianoSettings>(key: K, value: PianoSettings[K]) => void) => {
-
   const [isAudioStarted, setIsAudioStarted] = useState(false);
-
   const [isSamplesLoaded, setIsSamplesLoaded] = useState(false);
-
   
-
   const { soundType, volume, reverb, transpose, sustainEnabled, velocitySensitivity } = settings;
-
-
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
@@ -79,9 +72,10 @@ export const usePianoSound = (settings: PianoSettings, onSettingsChange: <K exte
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ latencyHint: 'interactive' });
     
     try {
-      // 1. Load AudioWorklet
-      await ctx.audioWorklet.addModule(new URL('../workers/pianoProcessor.ts', import.meta.url));
+      // 1. Load AudioWorklet using the Vite-processed URL
+      await ctx.audioWorklet.addModule(pianoProcessorUrl);
       const workletNode = new AudioWorkletNode(ctx, 'piano-processor');
+
       workletNode.connect(ctx.destination);
       workletNodeRef.current = workletNode;
 
