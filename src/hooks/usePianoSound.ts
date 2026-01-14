@@ -128,11 +128,15 @@ export const usePianoSound = (settings: PianoSettings, onSettingsChange: <K exte
   // Update worklet settings when they change
   useEffect(() => {
     if (workletNodeRef.current) {
-      // In this simple implementation, we might not have exposed parameters for volume yet,
-      // but we could send them via message.
       workletNodeRef.current.port.postMessage({ 
         type: 'config', 
-        payload: { volume, reverb, transpose, sustainEnabled, velocitySensitivity } 
+        payload: { 
+          volume, 
+          reverb, 
+          transpose, 
+          sustainEnabled, 
+          velocitySensitivity 
+        } 
       });
     }
   }, [volume, reverb, transpose, sustainEnabled, velocitySensitivity]);

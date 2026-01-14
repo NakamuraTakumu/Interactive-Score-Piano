@@ -125,10 +125,19 @@ export const useScoreLibrary = () => {
   };
 
   const renameScore = (id: string, newName: string) => {
-    if (!newName.trim()) return;
-    setScoreLibrary(prev => 
-      prev.map(s => s.id === id ? { ...s, name: newName.trim() } : s)
-    );
+    const trimmedName = newName.trim();
+    if (!trimmedName) return;
+    
+    setScoreLibrary(prev => {
+      // Prevent exact duplicates by adding a suffix if needed
+      let finalName = trimmedName;
+      let counter = 1;
+      while (prev.some(s => s.id !== id && s.name === finalName)) {
+        finalName = `${trimmedName} (${counter++})`;
+      }
+
+      return prev.map(s => s.id === id ? { ...s, name: finalName } : s);
+    });
   };
 
   const updateScoreNameFromTitle = (id: string, title: string) => {

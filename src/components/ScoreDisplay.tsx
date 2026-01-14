@@ -82,7 +82,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       if (closestX !== null && minDistance < threshold) {
         relatedMeasures.forEach(m => {
           m.noteDetails.forEach((note: any) => {
-            if (Math.abs(note.x - closestX!) < 1) targetMidiNotes.add(note.midi);
+            // Apply visualTranspose so the generated sound matches the visual representation
+            if (Math.abs(note.x - closestX!) < 1) targetMidiNotes.add(note.midi + visualTranspose);
           });
         });
       } else closestX = null;
@@ -234,8 +235,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
           const isBlackKey = (midi: number) => [1, 3, 6, 8, 10].includes(midi % 12);
 
-          // Determine if all notes are being played
-          const allActive = details.length > 0 && details.every((d: any) => activeNotes.has(d.midi));
+          // Determine if all notes are being played (compensate for visualTranspose)
+          const allActive = details.length > 0 && details.every((d: any) => activeNotes.has(d.midi + visualTranspose));
 
           if (allActive) {
             // A. 全ての音が弾かれている場合：和音全体を赤くする
@@ -256,6 +257,9 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
               details.forEach((detail: any) => {
                 let noteColor = baseColor;
                 
+                // Real MIDI note being played/selected
+                const realMidi = detail.midi + visualTranspose;
+
                 // --- Highlight Black Keys Logic ---
                 if (highlightBlackKeys && !isSelected && isBlackKey(detail.midi)) {
                   // keySig >= 0 (Sharp/Natural) -> Orange (Right side of white key)
@@ -263,9 +267,9 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
                   noteColor = ctx.keySig >= 0 ? '#fb8c00' : '#03a9f4';
                 }
 
-                if (activeNotes.has(detail.midi)) {
+                if (activeNotes.has(realMidi)) {
                   noteColor = '#ff0000';
-                } else if (isSelected && selectedMidiNotes.has(detail.midi)) {
+                } else if (isSelected && selectedMidiNotes.has(realMidi)) {
                   noteColor = '#4caf50';
                 }
 
@@ -292,12 +296,19 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     if (showGuideLines && activeNotes.size > 0) {
       contexts.forEach((ctx) => {
         let minLimit = -1, maxLimit = 1000;
-        if (ctx.minMidi !== null && ctx.maxMidi !== null) { minLimit = ctx.minMidi - 2; maxLimit = ctx.maxMidi + 2; }
+        // Compensate limits for visualTranspose
+        if (ctx.minMidi !== null && ctx.maxMidi !== null) { 
+          minLimit = (ctx.minMidi + visualTranspose) - 2; 
+          maxLimit = (ctx.maxMidi + visualTranspose) + 2; 
+        }
         else { if (ctx.clefType === 'G') minLimit = 55; else if (ctx.clefType === 'F') maxLimit = 65; }
+        
         Array.from(activeNotes).forEach(note => {
           if (showAllLines || (note >= minLimit && note <= maxLimit)) {
-            const y = calculateYForMidi(note, ctx, ppu);
-            const diatonic = isDiatonic(note, ctx.keySig, ctx.keyMode);
+            // Map the played MIDI note back to its visual position on the score
+            const visualNote = note - visualTranspose;
+            const y = calculateYForMidi(visualNote, ctx, ppu);
+            const diatonic = isDiatonic(visualNote, ctx.keySig, ctx.keyMode);
             lines.push(<line key={`l-${ctx.systemId}-${ctx.measureNumber}-${ctx.staffId}-${note}`} x1={ctx.x + 2} y1={y} x2={ctx.x + ctx.width - 2} y2={y} stroke={diatonic ? "red" : "#2196f3"} strokeWidth="3" strokeDasharray={diatonic ? "none" : "4 2"} opacity="0.8" />);
           }
         });

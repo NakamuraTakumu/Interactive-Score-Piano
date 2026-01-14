@@ -57,14 +57,26 @@ export const useWakeLock = () => {
   }, [requestWakeLock, releaseWakeLock]);
 
   useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && wakeLockRef.current === null) {
+        // If we were supposed to be awake (timeout hasn't fired), re-request
+        if (timeoutRef.current) {
+          await requestWakeLock();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     // Clean up on unmount
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (timeoutRef.current) {
         window.clearTimeout(timeoutRef.current);
       }
       releaseWakeLock();
     };
-  }, [releaseWakeLock]);
+  }, [releaseWakeLock, requestWakeLock]);
 
   return { keepAwake };
 };
