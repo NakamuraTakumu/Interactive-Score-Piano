@@ -261,7 +261,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
                 const realMidi = detail.midi + visualTranspose;
 
                 // --- Highlight Black Keys Logic ---
-                if (highlightBlackKeys && !isSelected && isBlackKey(detail.midi)) {
+                if (highlightBlackKeys && !isSelected && isBlackKey(realMidi)) {
                   // keySig >= 0 (Sharp/Natural) -> Orange (Right side of white key)
                   // keySig < 0 (Flat) -> Light Blue (Left side of white key)
                   noteColor = ctx.keySig >= 0 ? '#fb8c00' : '#03a9f4';
