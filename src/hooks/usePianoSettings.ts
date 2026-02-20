@@ -6,7 +6,7 @@ const DEFAULT_SETTINGS: PianoSettings = {
   showGuideLines: true,
   soundType: 'piano',
   volume: 0,
-  reverb: 0.3,
+  reverb: 0.1,
   transpose: 0,
   visualTranspose: 0,
   sustainEnabled: false,

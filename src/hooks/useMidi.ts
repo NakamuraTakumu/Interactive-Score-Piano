@@ -6,12 +6,17 @@ export interface MidiDevice {
   manufacturer?: string;
 }
 
+interface MidiEventPayload {
+  type: 'note-on' | 'note-off' | 'sustain';
+  payload: { midi?: number; velocity?: number; active?: boolean };
+}
+
 /**
  * Hook to manage currently pressed MIDI note numbers and MIDI devices
- * Receives MIDI events from the Main Thread (Web MIDI API) and forwards to AudioWorklet
+ * Receives MIDI events from the Main Thread (Web MIDI API)
  */
 export const useMidi = (
-  workletNode: AudioWorkletNode | null = null,
+  onMidiEvent?: (event: MidiEventPayload) => void,
   ensureAudioStarted?: () => Promise<void>
 ) => {
   const [activeNotes, setActiveNotes] = useState<Set<number>>(new Set());
@@ -30,19 +35,19 @@ export const useMidi = (
       void ensureAudioStarted();
     }
 
-    // 1. Forward to AudioWorklet for low-latency sound
-    if (workletNode) {
+    // 1. Forward MIDI event to sound engine
+    if (onMidiEvent) {
       // Note On
       if (command >= 0x90 && command <= 0x9F && data2 > 0) {
-        workletNode.port.postMessage({ type: 'note-on', payload: { midi: data1, velocity: data2 / 127 } });
+        onMidiEvent({ type: 'note-on', payload: { midi: data1, velocity: data2 / 127 } });
       } 
       // Note Off
       else if ((command >= 0x80 && command <= 0x8F) || (command >= 0x90 && command <= 0x9F && data2 === 0)) {
-        workletNode.port.postMessage({ type: 'note-off', payload: { midi: data1 } });
+        onMidiEvent({ type: 'note-off', payload: { midi: data1 } });
       }
       // Sustain Pedal (CC 64)
       else if (command === 0xB0 && data1 === 64) {
-        workletNode.port.postMessage({ type: 'sustain', payload: { active: data2 >= 64 } });
+        onMidiEvent({ type: 'sustain', payload: { active: data2 >= 64 } });
       }
     }
 
@@ -67,7 +72,7 @@ export const useMidi = (
         return next;
       });
     }
-  }, [workletNode, ensureAudioStarted]);
+  }, [onMidiEvent, ensureAudioStarted]);
 
   // Refresh Device List and Re-attach Listeners
   const refreshDevices = useCallback(() => {
@@ -113,6 +118,14 @@ export const useMidi = (
       console.error('Failed to get MIDI access', err);
     });
 
+    return () => {
+      const access = midiAccessRef.current;
+      if (!access) return;
+      for (const input of access.inputs.values()) {
+        input.onmidimessage = null;
+      }
+      access.onstatechange = null;
+    };
   }, []); // Run once on mount
 
   // Update listeners when device selection changes or midiAccess is ready

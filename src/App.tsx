@@ -27,10 +27,10 @@ function App() {
   const { settings, updateSetting, showAllLines, showGuideLines } = usePianoSettings();
   
   const { 
-    isAudioStarted, isSamplesLoaded, startAudio, playNotes, workletNode
+    isAudioStarted, isSamplesLoaded, startAudio, playNotes, handleMidiEvent
   } = usePianoSound(settings, updateSetting);
 
-  const { activeNotes, availableDevices, selectedDeviceId, selectDevice } = useMidi(workletNode, startAudio);
+  const { activeNotes, availableDevices, selectedDeviceId, selectDevice } = useMidi(handleMidiEvent, startAudio);
   const { keepAwake } = useWakeLock();
   
   // Custom Hooks
