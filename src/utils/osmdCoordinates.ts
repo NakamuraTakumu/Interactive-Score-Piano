@@ -85,10 +85,22 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
 
           let minMidi: number | null = null;
           let maxMidi: number | null = null;
-          const noteDetails: { midi: number, x: number, graphicalNote: any, index: number }[] = [];
+          const noteDetails: { midi: number, x: number, columnKey: string, graphicalNote: any, index: number }[] = [];
 
-          measure.staffEntries.forEach(gse => {
+          measure.staffEntries.forEach((gse, gseIndex) => {
             const entryX = gse.PositionAndShape.AbsolutePosition.x * pixelPerUnit;
+            const sourceStaffEntry = (gse as any).parentSourceStaffEntry;
+            const timestamp = sourceStaffEntry?.Timestamp;
+            const realValue = typeof timestamp?.RealValue === 'number' ? timestamp.RealValue : null;
+            const numerator = typeof timestamp?.Numerator === 'number' ? timestamp.Numerator : null;
+            const denominator = typeof timestamp?.Denominator === 'number' ? timestamp.Denominator : null;
+            const timestampKey = realValue !== null
+              ? `r${realValue}`
+              : (numerator !== null && denominator !== null)
+                ? `f${numerator}/${denominator}`
+                : `i${gseIndex}`;
+            const columnKey = `${source ? source.MeasureNumber : mIdx + 1}:${timestampKey}`;
+
             gse.graphicalVoiceEntries.forEach(gve => {
               gve.notes.forEach((gn, index) => {
                 if (gn.sourceNote && gn.sourceNote.Pitch) {
@@ -99,6 +111,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
                   noteDetails.push({
                     midi: soundingMidi,
                     x: entryX,
+                    columnKey,
                     graphicalNote: gn,
                     index: index
                   });

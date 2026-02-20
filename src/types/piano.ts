@@ -43,6 +43,7 @@ export interface MeasureContext {
   noteDetails: {
     midi: number;
     x: number; // 音符の横位置（ピクセル）
+    columnKey: string; // 同時刻（同じ縦列）を識別するキー
     graphicalNote: any; // GraphicalNote
   }[];
 }

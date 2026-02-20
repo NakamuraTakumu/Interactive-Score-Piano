@@ -49,6 +49,7 @@ function App() {
   const [selectedMeasure, setSelectedMeasure] = useState<MeasureContext | null>(null);
   const [selectedMidiNotes, setSelectedMidiNotes] = useState<Set<number>>(new Set());
   const [selectedNoteX, setSelectedNoteX] = useState<number | null>(null);
+  const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
 
   // Rename dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -101,6 +102,7 @@ function App() {
     setSelectedMeasure(null);
     setSelectedMidiNotes(new Set());
     setSelectedNoteX(null);
+    setSelectedColumnKey(null);
   }, []);
 
   const onScoreChangeWrapper = (id: string) => {
@@ -148,24 +150,31 @@ function App() {
     }
   };
 
-  const handleMeasureClick = useCallback((measure: MeasureContext | null, midiNotes: Set<number>, noteX: number | null, forcePlay: boolean = false) => {
+  const handleMeasureClick = useCallback((
+    measure: MeasureContext | null,
+    midiNotes: Set<number>,
+    noteX: number | null,
+    selectionColumnKey: string | null,
+    forcePlay: boolean = false
+  ) => {
     if (!measure) {
       resetSelection();
       return;
     }
 
-    const isDifferentX = noteX !== selectedNoteX;
+    const isDifferentColumn = selectionColumnKey !== selectedColumnKey;
     const isDifferentMidi = midiNotes.size !== selectedMidiNotes.size || 
                             Array.from(midiNotes).some(n => !selectedMidiNotes.has(n));
-    const isNewSelection = isDifferentX || isDifferentMidi;
+    const isNewSelection = isDifferentColumn || isDifferentMidi;
 
     if (isNewSelection || forcePlay) {
       setSelectedMeasure(measure);
       setSelectedMidiNotes(midiNotes);
       setSelectedNoteX(noteX);
+      setSelectedColumnKey(selectionColumnKey);
       if (midiNotes.size > 0) playNotes(Array.from(midiNotes));
     }
-  }, [playNotes, selectedNoteX, selectedMidiNotes, resetSelection]);
+  }, [playNotes, selectedColumnKey, selectedMidiNotes, resetSelection]);
 
   const handleTitleReady = useCallback((title: string) => {
     updateScoreNameFromTitle(currentScoreId, title);

@@ -7,7 +7,13 @@ interface ScoreDisplayProps {
   data: string;
   showAllLines?: boolean;
   showGuideLines?: boolean;
-  onMeasureClick?: (measure: MeasureContext | null, selectedMidiNotes: Set<number>, noteX: number | null, forcePlay: boolean) => void;
+  onMeasureClick?: (
+    measure: MeasureContext | null,
+    selectedMidiNotes: Set<number>,
+    noteX: number | null,
+    selectionColumnKey: string | null,
+    forcePlay: boolean
+  ) => void;
   onTitleReady?: (title: string) => void;
   onLoadingStateChange?: (isLoading: boolean) => void;
   selectedMeasureNumber?: number | null;
@@ -32,6 +38,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   highlightBlackKeys = true,
   visualTranspose = 0
 }) => {
+  const NOTE_SELECTION_THRESHOLD = 20;
+  const SAME_COLUMN_TOLERANCE_PX = 6;
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const lastLoadedDataRef = useRef<string | null>(null);
@@ -65,6 +73,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     if (clickedMeasure) {
       const targetMidiNotes = new Set<number>();
       let closestX: number | null = null;
+      let closestColumnKey: string | null = null;
       const relatedMeasures = contexts.filter(ctx => ctx.measureNumber === clickedMeasure.measureNumber && ctx.systemId === clickedMeasure.systemId);
 
       let minDistance = Infinity;
@@ -74,25 +83,27 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
           if (dist < minDistance) {
             minDistance = dist;
             closestX = note.x;
+            closestColumnKey = note.columnKey;
           }
         });
       });
 
-      const threshold = 20;
-      if (closestX !== null && minDistance < threshold) {
+      if (closestX !== null && minDistance < NOTE_SELECTION_THRESHOLD) {
         relatedMeasures.forEach(m => {
           m.noteDetails.forEach((note: any) => {
-            // Apply visualTranspose so the generated sound matches the visual representation
-            if (Math.abs(note.x - closestX!) < 1) targetMidiNotes.add(note.midi + visualTranspose);
+            if (closestColumnKey && note.columnKey === closestColumnKey) {
+              // Apply visualTranspose so the generated sound matches the visual representation
+              targetMidiNotes.add(note.midi + visualTranspose);
+            }
           });
         });
       } else closestX = null;
       
       // onMeasureClick に MIDIノート、X座標、および強制発音フラグを渡す
-      onMeasureClick(clickedMeasure, targetMidiNotes, closestX, forcePlay);
+      onMeasureClick(clickedMeasure, targetMidiNotes, closestX, closestColumnKey, forcePlay);
     } else {
       // 楽譜外（小節外）をクリックした場合は選択解除を通知
-      onMeasureClick(null, new Set(), null, false);
+      onMeasureClick(null, new Set(), null, null, false);
     }
   };
 
@@ -212,7 +223,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       gveMap.forEach((details, gve) => {
         const isSelected = selectedMeasureNumber === ctx.measureNumber && 
                            selectedNoteX !== null && 
-                           details.some(d => Math.abs(d.x - selectedNoteX) < 1);
+                           details.some(d => Math.abs(d.x - selectedNoteX) <= SAME_COLUMN_TOLERANCE_PX);
 
         // Calculate default color for the group (chord)
         let baseColor = isSelected ? '#4caf50' : '#000000';
