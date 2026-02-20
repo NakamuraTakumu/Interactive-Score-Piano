@@ -1,7 +1,7 @@
 import React, { ChangeEvent, useState } from 'react';
-import { 
-  Box, Paper, Stack, Button, IconButton, Tooltip, Slider, Switch, FormControlLabel, 
-  Select, MenuItem, FormControl, InputLabel, Typography, CircularProgress,
+import {
+  Box, Paper, Stack, Button, IconButton, Tooltip, Slider, Switch, FormControlLabel,
+  Select, MenuItem, FormControl, InputLabel, Typography, CircularProgress, ListSubheader,
   Popover, Divider
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -9,13 +9,14 @@ import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
-import MusicNoteIcon from '@mui/icons-material/MusicNote';
 import PianoIcon from '@mui/icons-material/Piano';
 import SettingsIcon from '@mui/icons-material/Settings';
 import TuneIcon from '@mui/icons-material/Tune';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
-import { SavedScore, SoundType, PianoSettings } from '../types/piano';
+import { SavedScore, PianoSettings } from '../types/piano';
 import { MidiDevice } from '../hooks/useMidi';
+import { GM_INSTRUMENTS } from '../data/gmInstruments';
+import { SoundFontOption } from '../data/soundFonts';
 
 interface ControlPanelProps {
   scoreLibrary: SavedScore[];
@@ -28,6 +29,8 @@ interface ControlPanelProps {
   isAudioStarted: boolean;
   onStartAudio: () => Promise<void>;
   onFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  soundFontOptions: SoundFontOption[];
+  onSoundFontUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
   isSamplesLoaded: boolean;
   availableMidiDevices: { id: string, name: string }[];
   selectedMidiDeviceId: string;
@@ -46,6 +49,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   isAudioStarted,
   onStartAudio,
   onFileUpload,
+  soundFontOptions,
+  onSoundFontUpload,
   isSamplesLoaded,
   availableMidiDevices,
   selectedMidiDeviceId,
@@ -61,6 +66,16 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   React.useEffect(() => {
     setLocalSettings(settings);
   }, [settings]);
+
+  const groupedInstruments = React.useMemo(() => {
+    const grouped = new Map<string, typeof GM_INSTRUMENTS>();
+    GM_INSTRUMENTS.forEach((instrument) => {
+      const existing = grouped.get(instrument.category) ?? [];
+      existing.push(instrument);
+      grouped.set(instrument.category, existing);
+    });
+    return Array.from(grouped.entries());
+  }, []);
 
   const handleSliderChange = (key: keyof PianoSettings) => (_: Event, newValue: number | number[]) => {
     setLocalSettings(prev => ({ ...prev, [key]: newValue as number }));
@@ -205,24 +220,59 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               </FormControl>
             </Box>
 
-            {/* Sound Type Section */}
+            {/* Instrument Section */}
             <Box>
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>Sound Type</Typography>
-              <FormControl fullWidth size="small">
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>SoundFont</Typography>
+              <FormControl fullWidth size="small" sx={{ mb: 1 }}>
                 <Select
-                  value={settings.soundType}
-                  onChange={(e) => updateSetting('soundType', e.target.value as SoundType)}
+                  value={settings.selectedSoundFontId}
+                  onChange={(e) => updateSetting('selectedSoundFontId', e.target.value)}
                   onOpen={onStartAudio}
+                  renderValue={(selected) => {
+                    const current = soundFontOptions.find((option) => option.id === selected);
+                    return current ? current.name : String(selected);
+                  }}
                 >
-                  <MenuItem value="piano" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <PianoIcon fontSize="small" /> Piano
-                    {!isSamplesLoaded && settings.soundType === 'piano' && <CircularProgress size={12} sx={{ ml: 1 }} />}
-                  </MenuItem>
-                  <MenuItem value="synth" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <MusicNoteIcon fontSize="small" /> Synth
-                  </MenuItem>
+                  <ListSubheader>Bundled</ListSubheader>
+                  {soundFontOptions.filter((option) => option.source === 'bundled').map((option) => (
+                    <MenuItem key={option.id} value={option.id}>{option.name}</MenuItem>
+                  ))}
+                  <ListSubheader>User</ListSubheader>
+                  {soundFontOptions.filter((option) => option.source === 'user').map((option) => (
+                    <MenuItem key={option.id} value={option.id}>{option.name}</MenuItem>
+                  ))}
                 </Select>
               </FormControl>
+              <Button size="small" variant="outlined" component="label">
+                Add SF2
+                <input type="file" hidden accept=".sf2" onChange={onSoundFontUpload} />
+              </Button>
+            </Box>
+
+            {/* Instrument Section */}
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>Instrument (GeneralUser GS)</Typography>
+              <FormControl fullWidth size="small">
+                <Select
+                  value={settings.gmProgram}
+                  onChange={(e) => updateSetting('gmProgram', Number(e.target.value))}
+                  onOpen={onStartAudio}
+                  renderValue={(selected) => {
+                    const current = GM_INSTRUMENTS.find((instrument) => instrument.program === selected);
+                    return current ? `${current.program + 1}: ${current.name}` : String(selected);
+                  }}
+                >
+                  {groupedInstruments.flatMap(([category, instruments]) => [
+                    <ListSubheader key={`h-${category}`}>{category}</ListSubheader>,
+                    ...instruments.map((instrument) => (
+                      <MenuItem key={instrument.program} value={instrument.program} sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 3 }}>
+                        <PianoIcon fontSize="small" /> {instrument.program + 1}: {instrument.name}
+                      </MenuItem>
+                    )),
+                  ])}
+                </Select>
+              </FormControl>
+              {!isSamplesLoaded && <CircularProgress size={14} sx={{ mt: 1 }} />}
             </Box>
 
             <Divider />

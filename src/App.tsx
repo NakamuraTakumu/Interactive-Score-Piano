@@ -10,6 +10,8 @@ import { useWakeLock } from './hooks/useWakeLock'
 import { useScoreLibrary } from './hooks/useScoreLibrary'
 import { usePianoSettings } from './hooks/usePianoSettings'
 import { MeasureContext, SavedScore } from './types/piano'
+import { DEFAULT_SOUND_FONT_ID, SOUND_FONT_PRESETS, SoundFontOption } from './data/soundFonts'
+import { listUserSoundFonts, saveUserSoundFont } from './utils/soundFontStorage'
 
 const theme = createTheme({
   palette: {
@@ -25,6 +27,9 @@ const MemoizedScoreDisplay = memo(ScoreDisplay);
 
 function App() {
   const { settings, updateSetting, showAllLines, showGuideLines } = usePianoSettings();
+  const [soundFontOptions, setSoundFontOptions] = useState<SoundFontOption[]>(
+    SOUND_FONT_PRESETS.map((preset) => ({ id: preset.id, name: preset.name, source: 'bundled' as const }))
+  );
   
   const { 
     isAudioStarted, isSamplesLoaded, startAudio, playNotes, handleMidiEvent
@@ -48,6 +53,34 @@ function App() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingScoreId, setEditingScoreId] = useState<string | null>(null);
   const [newScoreName, setNewScoreName] = useState('');
+
+  const refreshUserSoundFonts = useCallback(async () => {
+    const bundled = SOUND_FONT_PRESETS.map((preset) => ({ id: preset.id, name: preset.name, source: 'bundled' as const }));
+    try {
+      const userFonts = await listUserSoundFonts();
+      const mappedUsers: SoundFontOption[] = userFonts.map((font) => ({
+        id: font.id,
+        name: font.name,
+        source: 'user',
+      }));
+      setSoundFontOptions([...bundled, ...mappedUsers]);
+    } catch (error) {
+      console.error('Failed to read user SoundFonts from IndexedDB:', error);
+      setSoundFontOptions(bundled);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshUserSoundFonts();
+  }, [refreshUserSoundFonts]);
+
+  useEffect(() => {
+    if (soundFontOptions.length === 0) return;
+    const exists = soundFontOptions.some((font) => font.id === settings.selectedSoundFontId);
+    if (!exists) {
+      updateSetting('selectedSoundFontId', DEFAULT_SOUND_FONT_ID);
+    }
+  }, [settings.selectedSoundFontId, soundFontOptions, updateSetting]);
 
   // Keep screen awake when MIDI activity is detected
   useEffect(() => {
@@ -88,6 +121,27 @@ function App() {
     e.stopPropagation();
     handleDeleteScore(id);
     if (currentScoreId === id) resetSelection();
+  };
+
+  const handleSoundFontUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.sf2')) {
+      alert('Please select a .sf2 file.');
+      return;
+    }
+
+    try {
+      const saved = await saveUserSoundFont(file);
+      await refreshUserSoundFonts();
+      updateSetting('selectedSoundFontId', saved.id);
+      void startAudio();
+    } catch (error) {
+      console.error('Failed to store user SoundFont:', error);
+      alert('Failed to register SoundFont.');
+    }
   };
 
   const handleMeasureClick = useCallback((measure: MeasureContext | null, midiNotes: Set<number>, noteX: number | null, forcePlay: boolean = false) => {
@@ -166,6 +220,8 @@ function App() {
             isAudioStarted={isAudioStarted}
             onStartAudio={startAudio}
             onFileUpload={(e) => handleFileUpload(e, resetSelection)}
+            soundFontOptions={soundFontOptions}
+            onSoundFontUpload={handleSoundFontUpload}
             isSamplesLoaded={isSamplesLoaded}
             availableMidiDevices={availableDevices}
             selectedMidiDeviceId={selectedDeviceId}

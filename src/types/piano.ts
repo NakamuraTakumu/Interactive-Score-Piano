@@ -12,6 +12,8 @@ export interface PianoSettings {
   showAllLines: boolean;
   showGuideLines: boolean;
   soundType: SoundType;
+  selectedSoundFontId: string;
+  gmProgram: number;
   volume: number;
   reverb: number;
   transpose: number;

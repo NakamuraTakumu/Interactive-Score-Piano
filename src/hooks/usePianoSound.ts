@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import * as JSSynth from 'js-synthesizer';
 import { PianoSettings } from '../types/piano';
+import { DEFAULT_SOUND_FONT_ID, findSoundFontPreset } from '../data/soundFonts';
+import { getUserSoundFontData } from '../utils/soundFontStorage';
 
 interface MidiEventPayload {
   type: 'note-on' | 'note-off' | 'sustain';
@@ -9,11 +11,6 @@ interface MidiEventPayload {
 
 const CHANNEL = 0;
 const BASE_URL = import.meta.env.BASE_URL || '/';
-const SOUNDFONT_FILE = 'ChoriumRevA.sf2';
-const SOUNDFONT_CANDIDATES = [
-  `${BASE_URL}soundfonts/${SOUNDFONT_FILE}`,
-  `/soundfonts/${SOUNDFONT_FILE}`,
-];
 const LIBFLUIDSYNTH_CANDIDATES = [
   `${BASE_URL}vendor/libfluidsynth-2.4.6-with-libsndfile.js`,
   '/vendor/libfluidsynth-2.4.6-with-libsndfile.js',
@@ -25,6 +22,11 @@ const JSSYNTH_WORKLET_CANDIDATES = [
 const MAINTHREAD_LIBFLUIDSYNTH_CANDIDATES = LIBFLUIDSYNTH_CANDIDATES;
 
 let mainThreadFluidSynthReadyPromise: Promise<void> | null = null;
+
+const buildSoundFontCandidates = (fileName: string): string[] => [
+  `${BASE_URL}soundfonts/${fileName}`,
+  `/soundfonts/${fileName}`,
+];
 
 const addWorkletModuleWithFallback = async (ctx: AudioContext, paths: string[], label: string) => {
   for (const path of paths) {
@@ -89,12 +91,13 @@ export const usePianoSound = (
   const [isAudioStarted, setIsAudioStarted] = useState(false);
   const [isSamplesLoaded, setIsSamplesLoaded] = useState(false);
 
-  const { volume, reverb, transpose, sustainEnabled, velocitySensitivity } = settings;
+  const { volume, reverb, transpose, sustainEnabled, velocitySensitivity, gmProgram, selectedSoundFontId } = settings;
   const settingsRef = useRef(settings);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const synthRef = useRef<JSSynth.Synthesizer | JSSynth.AudioWorkletNodeSynthesizer | null>(null);
   const sfontIdRef = useRef<number | null>(null);
+  const loadedSoundFontIdRef = useRef<string | null>(null);
   const activeNotesRef = useRef<Map<number, number>>(new Map());
   const isSamplesLoadedRef = useRef(false);
   const initAudioPromiseRef = useRef<Promise<void> | null>(null);
@@ -118,7 +121,53 @@ export const usePianoSound = (
     synth.midiControl(CHANNEL, 91, Math.round(current.reverb * 127));
     synth.midiControl(CHANNEL, 93, 0);
     synth.midiControl(CHANNEL, 64, current.sustainEnabled ? 127 : 0);
+    if (sfontIdRef.current !== null) {
+      synth.midiProgramSelect(CHANNEL, sfontIdRef.current, 0, current.gmProgram);
+    }
   }, []);
+
+  const loadSelectedSoundFont = useCallback(async (soundFontId: string) => {
+    const synth = synthRef.current;
+    if (!synth) return;
+
+    const targetSoundFontId = soundFontId || DEFAULT_SOUND_FONT_ID;
+    let soundFontBuffer: ArrayBuffer | null = null;
+    const bundledPreset = findSoundFontPreset(targetSoundFontId);
+
+    if (bundledPreset) {
+      const candidates = buildSoundFontCandidates(bundledPreset.fileName);
+      for (const path of candidates) {
+        try {
+          const response = await fetch(path);
+          if (!response.ok) continue;
+          soundFontBuffer = await response.arrayBuffer();
+          break;
+        } catch {
+          // Try next path
+        }
+      }
+
+      if (!soundFontBuffer) {
+        throw new Error(`Failed to load SoundFont "${bundledPreset.name}" from: ${candidates.join(', ')}`);
+      }
+    } else {
+      soundFontBuffer = await getUserSoundFontData(targetSoundFontId);
+      if (!soundFontBuffer) {
+        throw new Error(`Failed to load user SoundFont from IndexedDB: ${targetSoundFontId}`);
+      }
+    }
+
+    const previousSfontId = sfontIdRef.current;
+    const nextSfontId = await synth.loadSFont(soundFontBuffer);
+
+    sfontIdRef.current = nextSfontId;
+    loadedSoundFontIdRef.current = targetSoundFontId;
+    applyCurrentSettings();
+
+    if (previousSfontId !== null && previousSfontId !== nextSfontId) {
+      synth.unloadSFontAsync(previousSfontId).catch(() => {});
+    }
+  }, [applyCurrentSettings]);
 
   const initAudio = useCallback(async () => {
     if (audioContextRef.current && synthRef.current) return;
@@ -157,39 +206,21 @@ export const usePianoSound = (
       synthRef.current = synth;
       setIsAudioStarted(true);
       applyCurrentSettings();
-
-      let soundFontBuffer: ArrayBuffer | null = null;
-      for (const path of SOUNDFONT_CANDIDATES) {
-        try {
-          const response = await fetch(path);
-          if (!response.ok) continue;
-          soundFontBuffer = await response.arrayBuffer();
-          break;
-        } catch {
-          // Try next path
-        }
-      }
-
-      if (!soundFontBuffer) {
-        throw new Error(`Failed to load SoundFont from: ${SOUNDFONT_CANDIDATES.join(', ')}`);
-      }
-
-      const sfontId = await synth.loadSFont(soundFontBuffer);
-      sfontIdRef.current = sfontId;
-      synth.midiProgramSelect(CHANNEL, sfontId, 0, 0);
+      setIsSamplesLoaded(false);
+      await loadSelectedSoundFont(settingsRef.current.selectedSoundFontId || DEFAULT_SOUND_FONT_ID);
       setIsSamplesLoaded(true);
     })();
 
     try {
       await initAudioPromiseRef.current;
     } catch (error) {
-      console.error('Failed to load SoundFont:', error);
+      console.error('Failed to initialize audio or load SoundFont:', error);
       setIsSamplesLoaded(false);
       throw error;
     } finally {
       initAudioPromiseRef.current = null;
     }
-  }, [applyCurrentSettings]);
+  }, [applyCurrentSettings, loadSelectedSoundFont]);
 
   const startAudio = useCallback(async () => {
     if (!audioContextRef.current || !synthRef.current) {
@@ -259,7 +290,24 @@ export const usePianoSound = (
 
   useEffect(() => {
     applyCurrentSettings();
-  }, [applyCurrentSettings, volume, reverb, sustainEnabled, velocitySensitivity]);
+  }, [applyCurrentSettings, volume, reverb, sustainEnabled, velocitySensitivity, gmProgram]);
+
+  useEffect(() => {
+    if (!synthRef.current) return;
+    if (loadedSoundFontIdRef.current === selectedSoundFontId) return;
+
+    setIsSamplesLoaded(false);
+    void (async () => {
+      try {
+        await startAudio();
+        await loadSelectedSoundFont(selectedSoundFontId);
+        setIsSamplesLoaded(true);
+      } catch (error) {
+        console.error('Failed to switch SoundFont:', error);
+        setIsSamplesLoaded(false);
+      }
+    })();
+  }, [selectedSoundFontId, startAudio, loadSelectedSoundFont]);
 
   useEffect(() => {
     return () => {
@@ -275,6 +323,7 @@ export const usePianoSound = (
       synthRef.current = null;
       audioContextRef.current = null;
       sfontIdRef.current = null;
+      loadedSoundFontIdRef.current = null;
     };
   }, []);
 

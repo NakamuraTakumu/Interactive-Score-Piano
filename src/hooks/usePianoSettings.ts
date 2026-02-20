@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
 import { PianoSettings, SoundType } from '../types/piano';
+import { DEFAULT_SOUND_FONT_ID } from '../data/soundFonts';
 
 const DEFAULT_SETTINGS: PianoSettings = {
   showAllLines: false,
   showGuideLines: true,
   soundType: 'piano',
+  selectedSoundFontId: DEFAULT_SOUND_FONT_ID,
+  gmProgram: 0,
   volume: 0,
   reverb: 0.1,
   transpose: 0,
