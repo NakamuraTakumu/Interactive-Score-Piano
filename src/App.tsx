@@ -30,9 +30,10 @@ function App() {
   const [soundFontOptions, setSoundFontOptions] = useState<SoundFontOption[]>(
     SOUND_FONT_PRESETS.map((preset) => ({ id: preset.id, name: preset.name, source: 'bundled' as const }))
   );
+  const [isSoundFontOptionsReady, setIsSoundFontOptionsReady] = useState(false);
   
   const { 
-    isAudioStarted, isSamplesLoaded, startAudio, playNotes, handleMidiEvent
+    isAudioStarted, isSamplesLoaded, audioEngine, startAudio, playNotes, handleMidiEvent
   } = usePianoSound(settings, updateSetting);
 
   const { activeNotes, availableDevices, selectedDeviceId, selectDevice } = useMidi(handleMidiEvent, startAudio);
@@ -67,6 +68,8 @@ function App() {
     } catch (error) {
       console.error('Failed to read user SoundFonts from IndexedDB:', error);
       setSoundFontOptions(bundled);
+    } finally {
+      setIsSoundFontOptionsReady(true);
     }
   }, []);
 
@@ -75,12 +78,13 @@ function App() {
   }, [refreshUserSoundFonts]);
 
   useEffect(() => {
+    if (!isSoundFontOptionsReady) return;
     if (soundFontOptions.length === 0) return;
     const exists = soundFontOptions.some((font) => font.id === settings.selectedSoundFontId);
     if (!exists) {
       updateSetting('selectedSoundFontId', DEFAULT_SOUND_FONT_ID);
     }
-  }, [settings.selectedSoundFontId, soundFontOptions, updateSetting]);
+  }, [settings.selectedSoundFontId, soundFontOptions, isSoundFontOptionsReady, updateSetting]);
 
   // Keep screen awake when MIDI activity is detected
   useEffect(() => {
@@ -223,6 +227,7 @@ function App() {
             soundFontOptions={soundFontOptions}
             onSoundFontUpload={handleSoundFontUpload}
             isSamplesLoaded={isSamplesLoaded}
+            audioEngine={audioEngine}
             availableMidiDevices={availableDevices}
             selectedMidiDeviceId={selectedDeviceId}
             onMidiDeviceChange={selectDevice}

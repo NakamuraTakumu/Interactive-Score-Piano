@@ -90,6 +90,7 @@ export const usePianoSound = (
 ) => {
   const [isAudioStarted, setIsAudioStarted] = useState(false);
   const [isSamplesLoaded, setIsSamplesLoaded] = useState(false);
+  const [audioEngine, setAudioEngine] = useState<'not-started' | 'worklet' | 'main-thread'>('not-started');
 
   const { volume, reverb, transpose, sustainEnabled, velocitySensitivity, gmProgram, selectedSoundFontId } = settings;
   const settingsRef = useRef(settings);
@@ -188,6 +189,8 @@ export const usePianoSound = (
 
         synth = new JSSynth.AudioWorkletNodeSynthesizer();
         synth.init(ctx.sampleRate);
+        setAudioEngine('worklet');
+        console.info('[audio] engine=worklet');
 
         const audioNode = synth.createAudioNode(ctx);
         audioNode.connect(ctx.destination);
@@ -198,6 +201,8 @@ export const usePianoSound = (
 
         synth = new JSSynth.Synthesizer();
         synth.init(ctx.sampleRate);
+        setAudioEngine('main-thread');
+        console.info('[audio] engine=main-thread');
         const audioNode = synth.createAudioNode(ctx, 256);
         audioNode.connect(ctx.destination);
       }
@@ -324,8 +329,9 @@ export const usePianoSound = (
       audioContextRef.current = null;
       sfontIdRef.current = null;
       loadedSoundFontIdRef.current = null;
+      setAudioEngine('not-started');
     };
   }, []);
 
-  return { isAudioStarted, isSamplesLoaded, startAudio, playNotes, handleMidiEvent };
+  return { isAudioStarted, isSamplesLoaded, audioEngine, startAudio, playNotes, handleMidiEvent };
 };

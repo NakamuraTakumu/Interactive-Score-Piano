@@ -32,6 +32,7 @@ interface ControlPanelProps {
   soundFontOptions: SoundFontOption[];
   onSoundFontUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
   isSamplesLoaded: boolean;
+  audioEngine: 'not-started' | 'worklet' | 'main-thread';
   availableMidiDevices: { id: string, name: string }[];
   selectedMidiDeviceId: string;
   onMidiDeviceChange: (id: string) => void;
@@ -52,6 +53,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   soundFontOptions,
   onSoundFontUpload,
   isSamplesLoaded,
+  audioEngine,
   availableMidiDevices,
   selectedMidiDeviceId,
   onMidiDeviceChange,
@@ -273,6 +275,9 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                 </Select>
               </FormControl>
               {!isSamplesLoaded && <CircularProgress size={14} sx={{ mt: 1 }} />}
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                Audio Engine: {audioEngine}
+              </Typography>
             </Box>
 
             <Divider />
