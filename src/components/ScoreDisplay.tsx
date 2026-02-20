@@ -295,6 +295,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     // ガイドラインが無効の場合は線を描画しない
     if (showGuideLines && activeNotes.size > 0) {
       contexts.forEach((ctx) => {
+        if (ctx.noteDetails.length === 0) return;
+
         let minLimit = -1, maxLimit = 1000;
         // Compensate limits for visualTranspose
         if (ctx.minMidi !== null && ctx.maxMidi !== null) { 

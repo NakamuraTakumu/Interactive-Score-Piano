@@ -30,7 +30,7 @@ function App() {
     isAudioStarted, isSamplesLoaded, startAudio, playNotes, workletNode
   } = usePianoSound(settings, updateSetting);
 
-  const { activeNotes, availableDevices, selectedDeviceId, selectDevice } = useMidi(workletNode);
+  const { activeNotes, availableDevices, selectedDeviceId, selectDevice } = useMidi(workletNode, startAudio);
   const { keepAwake } = useWakeLock();
   
   // Custom Hooks
@@ -53,8 +53,11 @@ function App() {
   useEffect(() => {
     if (activeNotes.size > 0) {
       keepAwake();
+      if (!isAudioStarted) {
+        void startAudio();
+      }
     }
-  }, [activeNotes, keepAwake]);
+  }, [activeNotes, keepAwake, isAudioStarted, startAudio]);
 
   // Reset selection when score changes
   const resetSelection = useCallback(() => {
@@ -230,4 +233,3 @@ function App() {
 }
 
 export default App;
-

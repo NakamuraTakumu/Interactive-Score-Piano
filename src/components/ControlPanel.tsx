@@ -101,8 +101,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                   return score ? score.name : selected;
                 }}
               >
-                <MenuItem value="sample"><em>Sample: Grand Staff</em></MenuItem>
-                <MenuItem value="clef-sample"><em>Sample: Clef Change</em></MenuItem>
+                <MenuItem value="sample">
+                  <Typography variant="body2">Sample: Grand Staff</Typography>
+                </MenuItem>
+                <MenuItem value="clef-sample">
+                  <Typography variant="body2">Sample: Clef Change</Typography>
+                </MenuItem>
                 {scoreLibrary.map((score) => (
                   <MenuItem key={score.id} value={score.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: 40 }}>
                     <Typography variant="body2" sx={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

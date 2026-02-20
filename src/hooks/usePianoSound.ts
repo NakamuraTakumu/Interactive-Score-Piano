@@ -78,21 +78,16 @@ export const usePianoSound = (settings: PianoSettings, onSettingsChange: <K exte
 
       workletNode.connect(ctx.destination);
       workletNodeRef.current = workletNode;
-
-      // 2. Setup MessageChannel for Direct Bypass
-      const channel = new MessageChannel();
-      // We don't have a MIDI worker anymore, so we don't need this channel setup for now.
-      // But if we wanted to connect another worker later, we could.
-      // For now, let's skip the complicated channel setup and just use workletNode.port from main thread.
-      
-      // But wait, the previous code had:
-      // workletNode.port.postMessage({ type: 'init-midi-port', payload: { port: channel.port2 } }, [channel.port2]);
-      // If we remove this, we need to make sure pianoProcessor handles messages from its main port too.
-      // pianoProcessor constructor: this.port.onmessage = ... (This listens to main thread)
-      // pianoProcessor handleMessage 'init-midi-port': sets up midiPort.
-      
-      // Since we are moving MIDI to main thread, we will send NoteOn/Off via workletNode.port directly.
-      // So no need for extra ports.
+      workletNode.port.postMessage({
+        type: 'config',
+        payload: {
+          volume,
+          reverb,
+          transpose,
+          sustainEnabled,
+          velocitySensitivity
+        }
+      });
 
       audioContextRef.current = ctx;
       setIsAudioStarted(true);
@@ -103,7 +98,7 @@ export const usePianoSound = (settings: PianoSettings, onSettingsChange: <K exte
     } catch (e) {
       console.error('Failed to initialize audio system:', e);
     }
-  }, [loadSamples]);
+  }, [loadSamples, volume, reverb, transpose, sustainEnabled, velocitySensitivity]);
 
   const startAudio = useCallback(async () => {
     if (!audioContextRef.current) {
@@ -116,7 +111,7 @@ export const usePianoSound = (settings: PianoSettings, onSettingsChange: <K exte
 
   // Handle manual note playing (e.g. from UI)
   const playNotes = useCallback(async (midiNotes: number[]) => {
-    if (!workletNodeRef.current) await startAudio();
+    await startAudio();
     midiNotes.forEach(note => {
       workletNodeRef.current?.port.postMessage({ type: 'note-on', payload: { midi: note, velocity: 0.8 } });
       setTimeout(() => {

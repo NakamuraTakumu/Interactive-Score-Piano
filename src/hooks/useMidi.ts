@@ -10,7 +10,10 @@ export interface MidiDevice {
  * Hook to manage currently pressed MIDI note numbers and MIDI devices
  * Receives MIDI events from the Main Thread (Web MIDI API) and forwards to AudioWorklet
  */
-export const useMidi = (workletNode: AudioWorkletNode | null = null) => {
+export const useMidi = (
+  workletNode: AudioWorkletNode | null = null,
+  ensureAudioStarted?: () => Promise<void>
+) => {
   const [activeNotes, setActiveNotes] = useState<Set<number>>(new Set());
   const [availableDevices, setAvailableDevices] = useState<MidiDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('all');
@@ -21,7 +24,11 @@ export const useMidi = (workletNode: AudioWorkletNode | null = null) => {
   const handleMidiMessage = useCallback((event: any) => {
     if (!event.data) return;
     const [command, data1, data2] = event.data;
-    const timestamp = event.timeStamp;
+
+    // Try to unlock/resume audio as early as possible on MIDI activity.
+    if (ensureAudioStarted) {
+      void ensureAudioStarted();
+    }
 
     // 1. Forward to AudioWorklet for low-latency sound
     if (workletNode) {
@@ -60,7 +67,7 @@ export const useMidi = (workletNode: AudioWorkletNode | null = null) => {
         return next;
       });
     }
-  }, [workletNode]);
+  }, [workletNode, ensureAudioStarted]);
 
   // Refresh Device List and Re-attach Listeners
   const refreshDevices = useCallback(() => {
