@@ -98,6 +98,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
 
   const open = Boolean(anchorEl);
   const id = open ? 'settings-popover' : undefined;
+  const sortedActiveNotes = Array.from(activeNotes).sort((a, b) => a - b);
+  const activeNotesPreview = sortedActiveNotes.slice(0, 6).join(', ');
+  const activeNotesText = sortedActiveNotes.length > 6
+    ? `MIDI: ${activeNotesPreview}, ... (+${sortedActiveNotes.length - 6})`
+    : `MIDI: ${activeNotesPreview}`;
+  const activeNotesFullText = `MIDI: ${sortedActiveNotes.join(', ')}`;
 
   return (
     <Stack spacing={2} sx={{ mb: 3 }} onClick={(e) => e.stopPropagation()}>
@@ -145,13 +151,41 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             </IconButton>
           </Tooltip>
 
-          {activeNotes.size > 0 && (
-            <Box sx={{ ml: 1, px: 1.5, py: 0.5, bgcolor: 'action.hover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
-              <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 'bold', color: 'primary.main' }}>
-                MIDI: {Array.from(activeNotes).sort((a, b) => a - b).join(', ')}
-              </Typography>
-            </Box>
-          )}
+          <Box
+            title={activeNotes.size > 0 ? activeNotesFullText : undefined}
+            sx={{
+              ml: 1,
+              px: 1.5,
+              py: 0.5,
+              width: 260,
+              minWidth: 260,
+              height: 26,
+              display: 'flex',
+              alignItems: 'center',
+              bgcolor: 'action.hover',
+              borderRadius: 1,
+              border: '1px solid',
+              borderColor: 'divider',
+              overflow: 'hidden'
+            }}
+          >
+            <Typography
+              variant="caption"
+              sx={{
+                display: 'block',
+                width: '100%',
+                fontFamily: 'monospace',
+                fontWeight: 'bold',
+                color: 'primary.main',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                visibility: activeNotes.size > 0 ? 'visible' : 'hidden'
+              }}
+            >
+              {activeNotes.size > 0 ? activeNotesText : 'MIDI:'}
+            </Typography>
+          </Box>
         </Box>
         
         <Stack direction="row" spacing={3} alignItems="center">
@@ -301,6 +335,17 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             <Divider />
 
             {/* Existing Advanced Settings */}
+            <Stack direction="row" spacing={2} flexWrap="wrap">
+              <FormControlLabel
+                control={<Switch size="small" checked={settings.reverbEnabled} onChange={(e) => updateSetting('reverbEnabled', e.target.checked)} />}
+                label={<Typography variant="body2">Reverb ON</Typography>}
+              />
+              <FormControlLabel
+                control={<Switch size="small" checked={settings.chorusEnabled} onChange={(e) => updateSetting('chorusEnabled', e.target.checked)} />}
+                label={<Typography variant="body2">Chorus ON</Typography>}
+              />
+            </Stack>
+
             <Box>
               <Typography variant="caption" color="text.secondary">Reverb (Hall Ambience)</Typography>
               <Slider 

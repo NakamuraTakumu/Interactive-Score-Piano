@@ -15,6 +15,8 @@ export interface PianoSettings {
   selectedSoundFontId: string;
   gmProgram: number;
   volume: number;
+  reverbEnabled: boolean;
+  chorusEnabled: boolean;
   reverb: number;
   transpose: number;
   visualTranspose: number;

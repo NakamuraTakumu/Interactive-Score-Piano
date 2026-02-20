@@ -9,6 +9,11 @@ interface MidiEventPayload {
   payload: { midi?: number; velocity?: number; active?: boolean };
 }
 
+interface FxToggleCapable {
+  setReverbOn?: unknown;
+  setChorusOn?: unknown;
+}
+
 const CHANNEL = 0;
 const BASE_URL = import.meta.env.BASE_URL || '/';
 const LIBFLUIDSYNTH_CANDIDATES = [
@@ -92,7 +97,7 @@ export const usePianoSound = (
   const [isSamplesLoaded, setIsSamplesLoaded] = useState(false);
   const [audioEngine, setAudioEngine] = useState<'not-started' | 'worklet' | 'main-thread'>('not-started');
 
-  const { volume, reverb, transpose, sustainEnabled, velocitySensitivity, gmProgram, selectedSoundFontId } = settings;
+  const { volume, reverb, transpose, sustainEnabled, velocitySensitivity, gmProgram, selectedSoundFontId, reverbEnabled, chorusEnabled } = settings;
   const settingsRef = useRef(settings);
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -118,8 +123,15 @@ export const usePianoSound = (
     if (!synth) return;
 
     const current = settingsRef.current;
+    const fxSynth = synth as unknown as FxToggleCapable;
     synth.setGain(dbToGain(current.volume));
-    synth.midiControl(CHANNEL, 91, Math.round(current.reverb * 127));
+    if (typeof fxSynth.setReverbOn === 'function') {
+      fxSynth.setReverbOn(current.reverbEnabled);
+    }
+    if (typeof fxSynth.setChorusOn === 'function') {
+      fxSynth.setChorusOn(current.chorusEnabled);
+    }
+    synth.midiControl(CHANNEL, 91, current.reverbEnabled ? Math.round(current.reverb * 127) : 0);
     synth.midiControl(CHANNEL, 93, 0);
     synth.midiControl(CHANNEL, 64, current.sustainEnabled ? 127 : 0);
     if (sfontIdRef.current !== null) {
@@ -295,7 +307,7 @@ export const usePianoSound = (
 
   useEffect(() => {
     applyCurrentSettings();
-  }, [applyCurrentSettings, volume, reverb, sustainEnabled, velocitySensitivity, gmProgram]);
+  }, [applyCurrentSettings, volume, reverb, sustainEnabled, velocitySensitivity, gmProgram, reverbEnabled, chorusEnabled]);
 
   useEffect(() => {
     if (!synthRef.current) return;

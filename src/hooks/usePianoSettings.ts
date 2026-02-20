@@ -9,6 +9,8 @@ const DEFAULT_SETTINGS: PianoSettings = {
   selectedSoundFontId: DEFAULT_SOUND_FONT_ID,
   gmProgram: 0,
   volume: 0,
+  reverbEnabled: true,
+  chorusEnabled: false,
   reverb: 0.1,
   transpose: 0,
   visualTranspose: 0,
