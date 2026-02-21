@@ -79,3 +79,14 @@ export const getUserSoundFontData = async (id: string): Promise<ArrayBuffer | nu
     db.close();
   }
 };
+
+export const deleteUserSoundFont = async (id: string): Promise<void> => {
+  const db = await openDb();
+  try {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    await runRequest(store.delete(id));
+  } finally {
+    db.close();
+  }
+};

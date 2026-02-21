@@ -29,6 +29,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   visualTranspose = 0
 }) => {
   const NOTE_SELECTION_THRESHOLD = 20;
+  const SAME_COLUMN_TOLERANCE_PX = 6;
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const lastLoadedDataRef = useRef<string | null>(null);
@@ -62,7 +63,6 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     if (clickedMeasure) {
       const targetMidiNotes = new Set<number>();
       let closestX: number | null = null;
-      let closestColumnKey: string | null = null;
       const relatedMeasures = contexts.filter(ctx => ctx.measureNumber === clickedMeasure.measureNumber && ctx.systemId === clickedMeasure.systemId);
 
       let minDistance = Infinity;
@@ -72,7 +72,6 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
           if (dist < minDistance) {
             minDistance = dist;
             closestX = note.x;
-            closestColumnKey = note.columnKey;
           }
         });
       });
@@ -80,7 +79,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       if (closestX !== null && minDistance < NOTE_SELECTION_THRESHOLD) {
         relatedMeasures.forEach(m => {
           m.noteDetails.forEach((note: any) => {
-            if (closestColumnKey && note.columnKey === closestColumnKey) {
+            if (Math.abs(note.x - closestX!) <= SAME_COLUMN_TOLERANCE_PX) {
               // Apply visualTranspose so the generated sound matches the visual representation
               targetMidiNotes.add(note.midi + visualTranspose);
             }
@@ -91,8 +90,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       onSelectionChange({
         measure: clickedMeasure,
         midiNotes: targetMidiNotes,
-        noteX: closestX,
-        columnKey: closestColumnKey
+        noteX: closestX
       }, forcePlay);
     } else {
       // 楽譜外（小節外）をクリックした場合は選択解除を通知
@@ -217,8 +215,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         const isSelected = selection !== null &&
                            selection.measure.measureNumber === ctx.measureNumber &&
                            selection.measure.systemId === ctx.systemId &&
-                           selection.columnKey !== null &&
-                           details.some(d => d.columnKey === selection.columnKey);
+                           selection.noteX !== null &&
+                           details.some(d => Math.abs(d.x - selection.noteX!) <= SAME_COLUMN_TOLERANCE_PX);
 
         // Calculate default color for the group (chord)
         const baseColor = '#000000';

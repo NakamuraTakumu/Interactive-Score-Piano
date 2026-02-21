@@ -26,11 +26,13 @@ interface ControlPanelProps {
   onDeleteScore: (e: React.MouseEvent, id: string) => void;
   settings: PianoSettings;
   updateSetting: <K extends keyof PianoSettings>(key: K, value: PianoSettings[K]) => void;
+  onResetSettings: () => void;
   isAudioStarted: boolean;
   onStartAudio: () => Promise<void>;
   onFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
   soundFontOptions: SoundFontOption[];
   onSoundFontUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onDeleteSoundFont: (id: string) => void | Promise<void>;
   isSamplesLoaded: boolean;
   audioEngine: 'not-started' | 'worklet' | 'main-thread';
   availableMidiDevices: { id: string, name: string }[];
@@ -47,11 +49,13 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onDeleteScore,
   settings,
   updateSetting,
+  onResetSettings,
   isAudioStarted,
   onStartAudio,
   onFileUpload,
   soundFontOptions,
   onSoundFontUpload,
+  onDeleteSoundFont,
   isSamplesLoaded,
   audioEngine,
   availableMidiDevices,
@@ -96,6 +100,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     setAnchorEl(null);
   };
 
+  const handleResetSettings = () => {
+    const confirmed = window.confirm('Reset all settings to defaults?');
+    if (!confirmed) return;
+    onResetSettings();
+  };
+
   const open = Boolean(anchorEl);
   const id = open ? 'settings-popover' : undefined;
   const sortedActiveNotes = Array.from(activeNotes).sort((a, b) => a - b);
@@ -104,6 +114,15 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     ? `MIDI: ${activeNotesPreview}, ... (+${sortedActiveNotes.length - 6})`
     : `MIDI: ${activeNotesPreview}`;
   const activeNotesFullText = `MIDI: ${sortedActiveNotes.join(', ')}`;
+  const selectedSoundFontOption = soundFontOptions.find((option) => option.id === settings.selectedSoundFontId);
+  const canDeleteSelectedSoundFont = selectedSoundFontOption?.source === 'user';
+
+  const handleDeleteSelectedSoundFont = () => {
+    if (!canDeleteSelectedSoundFont) return;
+    const confirmed = window.confirm(`Delete SoundFont "${selectedSoundFontOption.name}"?`);
+    if (!confirmed) return;
+    void onDeleteSoundFont(selectedSoundFontOption.id);
+  };
 
   return (
     <Stack spacing={2} sx={{ mb: 3 }} onClick={(e) => e.stopPropagation()}>
@@ -283,6 +302,16 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                 Add SF2
                 <input type="file" hidden accept=".sf2" onChange={onSoundFontUpload} />
               </Button>
+              <Button
+                size="small"
+                color="error"
+                variant="outlined"
+                onClick={handleDeleteSelectedSoundFont}
+                disabled={!canDeleteSelectedSoundFont}
+                sx={{ ml: 1 }}
+              >
+                Delete SF2
+              </Button>
             </Box>
 
             {/* Instrument Section */}
@@ -396,6 +425,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               control={<Switch size="small" checked={settings.sustainEnabled} onChange={(e) => updateSetting('sustainEnabled', e.target.checked)} />}
               label={<Typography variant="body2">Always Sustain (Pedal ON)</Typography>}
             />
+
+            <Button size="small" color="error" variant="outlined" onClick={handleResetSettings}>
+              Reset Settings
+            </Button>
           </Stack>
         </Paper>
       </Popover>

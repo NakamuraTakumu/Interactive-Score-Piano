@@ -11,7 +11,7 @@ import { useScoreLibrary } from './hooks/useScoreLibrary'
 import { usePianoSettings } from './hooks/usePianoSettings'
 import { SavedScore, SelectionResult } from './types/piano'
 import { DEFAULT_SOUND_FONT_ID, SOUND_FONT_PRESETS, SoundFontOption } from './data/soundFonts'
-import { listUserSoundFonts, saveUserSoundFont } from './utils/soundFontStorage'
+import { deleteUserSoundFont, listUserSoundFonts, saveUserSoundFont } from './utils/soundFontStorage'
 
 const theme = createTheme({
   palette: {
@@ -27,7 +27,7 @@ const MemoizedScoreDisplay = memo(ScoreDisplay);
 const EMPTY_NOTES = new Set<number>();
 
 function App() {
-  const { settings, updateSetting, showAllLines, showGuideLines } = usePianoSettings();
+  const { settings, updateSetting, resetSettings, showAllLines, showGuideLines } = usePianoSettings();
   const [soundFontOptions, setSoundFontOptions] = useState<SoundFontOption[]>(
     SOUND_FONT_PRESETS.map((preset) => ({ id: preset.id, name: preset.name, source: 'bundled' as const }))
   );
@@ -145,6 +145,19 @@ function App() {
     }
   };
 
+  const handleSoundFontDelete = async (id: string) => {
+    try {
+      await deleteUserSoundFont(id);
+      await refreshUserSoundFonts();
+      if (settings.selectedSoundFontId === id) {
+        updateSetting('selectedSoundFontId', DEFAULT_SOUND_FONT_ID);
+      }
+    } catch (error) {
+      console.error('Failed to delete user SoundFont:', error);
+      alert('Failed to delete SoundFont.');
+    }
+  };
+
   const handleSelectionChange = useCallback((
     nextSelection: SelectionResult | null,
     forcePlay: boolean = false
@@ -154,11 +167,11 @@ function App() {
       return;
     }
 
-    const isDifferentColumn = nextSelection.columnKey !== selected?.columnKey;
+    const isDifferentX = nextSelection.noteX !== selected?.noteX;
     const prevMidiNotes = selected?.midiNotes ?? EMPTY_NOTES;
     const isDifferentMidi = nextSelection.midiNotes.size !== prevMidiNotes.size || 
                             Array.from(nextSelection.midiNotes).some(n => !prevMidiNotes.has(n));
-    const isNewSelection = isDifferentColumn || isDifferentMidi;
+    const isNewSelection = isDifferentX || isDifferentMidi;
 
     if (isNewSelection || forcePlay) {
       setSelected(nextSelection);
@@ -220,11 +233,13 @@ function App() {
             onDeleteScore={handleDeleteScoreWrapper}
             settings={settings}
             updateSetting={updateSetting}
+            onResetSettings={resetSettings}
             isAudioStarted={isAudioStarted}
             onStartAudio={startAudio}
             onFileUpload={(e) => handleFileUpload(e, resetSelection)}
             soundFontOptions={soundFontOptions}
             onSoundFontUpload={handleSoundFontUpload}
+            onDeleteSoundFont={handleSoundFontDelete}
             isSamplesLoaded={isSamplesLoaded}
             audioEngine={audioEngine}
             availableMidiDevices={availableDevices}

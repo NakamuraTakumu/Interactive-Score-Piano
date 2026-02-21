@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS: PianoSettings = {
   transpose: 0,
   visualTranspose: 0,
   sustainEnabled: false,
-  velocitySensitivity: 0.8,
+  velocitySensitivity: 1,
   highlightBlackKeys: true
 };
 
@@ -36,6 +36,10 @@ export const usePianoSettings = () => {
     setSettings(prev => ({ ...prev, [key]: value }));
   };
 
+  const resetSettings = () => {
+    setSettings(DEFAULT_SETTINGS);
+  };
+
   // Persist settings to localStorage
   useEffect(() => {
     localStorage.setItem('piano_app_settings', JSON.stringify(settings));
@@ -44,6 +48,7 @@ export const usePianoSettings = () => {
   return {
     settings,
     updateSetting,
+    resetSettings,
     // Helper accessors for convenience
     showAllLines: settings.showAllLines,
     setShowAllLines: (val: boolean) => updateSetting('showAllLines', val),
