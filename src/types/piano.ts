@@ -47,3 +47,10 @@ export interface MeasureContext {
     graphicalNote: any; // GraphicalNote
   }[];
 }
+
+export interface SelectionResult {
+  measure: MeasureContext;
+  midiNotes: Set<number>;
+  noteX: number | null;
+  columnKey: string | null;
+}

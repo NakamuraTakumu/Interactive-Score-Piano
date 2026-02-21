@@ -1,24 +1,16 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { OpenSheetMusicDisplay, TransposeCalculator } from 'opensheetmusicdisplay';
-import { MeasureContext } from '../types/piano';
+import { MeasureContext, SelectionResult } from '../types/piano';
 import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint } from '../utils/osmdCoordinates';
 
 interface ScoreDisplayProps {
   data: string;
   showAllLines?: boolean;
   showGuideLines?: boolean;
-  onMeasureClick?: (
-    measure: MeasureContext | null,
-    selectedMidiNotes: Set<number>,
-    noteX: number | null,
-    selectionColumnKey: string | null,
-    forcePlay: boolean
-  ) => void;
+  onSelectionChange?: (selection: SelectionResult | null, forcePlay: boolean) => void;
   onTitleReady?: (title: string) => void;
   onLoadingStateChange?: (isLoading: boolean) => void;
-  selectedMeasureNumber?: number | null;
-  selectedMidiNotes?: Set<number>;
-  selectedNoteX?: number | null;
+  selection?: SelectionResult | null;
   activeNotes?: Set<number>;
   highlightBlackKeys?: boolean;
   visualTranspose?: number;
@@ -28,18 +20,15 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   data,
   showAllLines = false,
   showGuideLines = true,
-  onMeasureClick,
+  onSelectionChange,
   onTitleReady,
   onLoadingStateChange,
-  selectedMeasureNumber = null,
-  selectedMidiNotes = new Set(),
-  selectedNoteX = null,
+  selection = null,
   activeNotes = new Set(),
   highlightBlackKeys = true,
   visualTranspose = 0
 }) => {
   const NOTE_SELECTION_THRESHOLD = 20;
-  const SAME_COLUMN_TOLERANCE_PX = 6;
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const lastLoadedDataRef = useRef<string | null>(null);
@@ -59,7 +48,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     if (measure !== hoveredMeasure) setHoveredMeasure(measure);
 
     // Execute selection logic if dragging (left button down)
-    if (event.buttons === 1 && onMeasureClick) {
+    if (event.buttons === 1 && onSelectionChange) {
       updateSelectionAtPoint(x, y, false); // 移動中は重複を避けるため forcePlay = false
     }
   };
@@ -67,7 +56,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const handleMouseLeave = () => setHoveredMeasure(null);
 
   const updateSelectionAtPoint = (x: number, y: number, forcePlay: boolean) => {
-    if (!onMeasureClick) return;
+    if (!onSelectionChange) return;
     const clickedMeasure = getMeasureAtPoint(x, y, contexts);
     
     if (clickedMeasure) {
@@ -99,11 +88,15 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         });
       } else closestX = null;
       
-      // onMeasureClick に MIDIノート、X座標、および強制発音フラグを渡す
-      onMeasureClick(clickedMeasure, targetMidiNotes, closestX, closestColumnKey, forcePlay);
+      onSelectionChange({
+        measure: clickedMeasure,
+        midiNotes: targetMidiNotes,
+        noteX: closestX,
+        columnKey: closestColumnKey
+      }, forcePlay);
     } else {
       // 楽譜外（小節外）をクリックした場合は選択解除を通知
-      onMeasureClick(null, new Set(), null, null, false);
+      onSelectionChange(null, false);
     }
   };
 
@@ -221,12 +214,14 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       });
 
       gveMap.forEach((details, gve) => {
-        const isSelected = selectedMeasureNumber === ctx.measureNumber && 
-                           selectedNoteX !== null && 
-                           details.some(d => Math.abs(d.x - selectedNoteX) <= SAME_COLUMN_TOLERANCE_PX);
+        const isSelected = selection !== null &&
+                           selection.measure.measureNumber === ctx.measureNumber &&
+                           selection.measure.systemId === ctx.systemId &&
+                           selection.columnKey !== null &&
+                           details.some(d => d.columnKey === selection.columnKey);
 
         // Calculate default color for the group (chord)
-        let baseColor = isSelected ? '#4caf50' : '#000000';
+        const baseColor = '#000000';
 
         // 1. VexFlow の StaveNote オブジェクトを取得
         const vf = details[0]?.graphicalNote?.vfnote;
@@ -280,7 +275,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
                 if (activeNotes.has(realMidi)) {
                   noteColor = '#ff0000';
-                } else if (isSelected && selectedMidiNotes.has(realMidi)) {
+                } else if (isSelected && selection?.midiNotes.has(realMidi)) {
                   noteColor = '#4caf50';
                 }
 
@@ -293,12 +288,12 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         }
       });
     });
-  }, [activeNotes, contexts, selectedMeasureNumber, selectedNoteX, selectedMidiNotes]);
+  }, [activeNotes, contexts, selection, highlightBlackKeys, visualTranspose]);
 
   const renderLines = useMemo(() => {
     const lines: React.JSX.Element[] = [];
-    if (selectedMeasureNumber !== null) {
-      contexts.filter(ctx => ctx.measureNumber === selectedMeasureNumber).forEach(ctx => {
+    if (selection !== null) {
+      contexts.filter(ctx => ctx.measureNumber === selection.measure.measureNumber && ctx.systemId === selection.measure.systemId).forEach(ctx => {
         lines.push(<rect key={`sel-${ctx.systemId}-${ctx.measureNumber}-${ctx.staffId}`} x={ctx.x} y={ctx.y} width={ctx.width} height={ctx.height} fill="rgba(76, 175, 80, 0.05)" stroke="#4caf50" strokeWidth="1" pointerEvents="none" />);
       });
     }
@@ -328,7 +323,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       });
     }
     return lines;
-  }, [activeNotes, contexts, ppu, showAllLines, selectedMeasureNumber, showGuideLines]);
+  }, [activeNotes, contexts, ppu, showAllLines, selection, showGuideLines, visualTranspose]);
 
   return (
     <div 

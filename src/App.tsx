@@ -9,7 +9,7 @@ import { usePianoSound } from './hooks/usePianoSound'
 import { useWakeLock } from './hooks/useWakeLock'
 import { useScoreLibrary } from './hooks/useScoreLibrary'
 import { usePianoSettings } from './hooks/usePianoSettings'
-import { MeasureContext, SavedScore } from './types/piano'
+import { SavedScore, SelectionResult } from './types/piano'
 import { DEFAULT_SOUND_FONT_ID, SOUND_FONT_PRESETS, SoundFontOption } from './data/soundFonts'
 import { listUserSoundFonts, saveUserSoundFont } from './utils/soundFontStorage'
 
@@ -24,6 +24,7 @@ const theme = createTheme({
 
 // Memoized ScoreDisplay to prevent unnecessary re-renders
 const MemoizedScoreDisplay = memo(ScoreDisplay);
+const EMPTY_NOTES = new Set<number>();
 
 function App() {
   const { settings, updateSetting, showAllLines, showGuideLines } = usePianoSettings();
@@ -46,10 +47,7 @@ function App() {
   } = useScoreLibrary();
 
   // Local State for Interaction
-  const [selectedMeasure, setSelectedMeasure] = useState<MeasureContext | null>(null);
-  const [selectedMidiNotes, setSelectedMidiNotes] = useState<Set<number>>(new Set());
-  const [selectedNoteX, setSelectedNoteX] = useState<number | null>(null);
-  const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
+  const [selected, setSelected] = useState<SelectionResult | null>(null);
 
   // Rename dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -99,10 +97,7 @@ function App() {
 
   // Reset selection when score changes
   const resetSelection = useCallback(() => {
-    setSelectedMeasure(null);
-    setSelectedMidiNotes(new Set());
-    setSelectedNoteX(null);
-    setSelectedColumnKey(null);
+    setSelected(null);
   }, []);
 
   const onScoreChangeWrapper = (id: string) => {
@@ -150,31 +145,26 @@ function App() {
     }
   };
 
-  const handleMeasureClick = useCallback((
-    measure: MeasureContext | null,
-    midiNotes: Set<number>,
-    noteX: number | null,
-    selectionColumnKey: string | null,
+  const handleSelectionChange = useCallback((
+    nextSelection: SelectionResult | null,
     forcePlay: boolean = false
   ) => {
-    if (!measure) {
+    if (!nextSelection) {
       resetSelection();
       return;
     }
 
-    const isDifferentColumn = selectionColumnKey !== selectedColumnKey;
-    const isDifferentMidi = midiNotes.size !== selectedMidiNotes.size || 
-                            Array.from(midiNotes).some(n => !selectedMidiNotes.has(n));
+    const isDifferentColumn = nextSelection.columnKey !== selected?.columnKey;
+    const prevMidiNotes = selected?.midiNotes ?? EMPTY_NOTES;
+    const isDifferentMidi = nextSelection.midiNotes.size !== prevMidiNotes.size || 
+                            Array.from(nextSelection.midiNotes).some(n => !prevMidiNotes.has(n));
     const isNewSelection = isDifferentColumn || isDifferentMidi;
 
     if (isNewSelection || forcePlay) {
-      setSelectedMeasure(measure);
-      setSelectedMidiNotes(midiNotes);
-      setSelectedNoteX(noteX);
-      setSelectedColumnKey(selectionColumnKey);
-      if (midiNotes.size > 0) playNotes(Array.from(midiNotes));
+      setSelected(nextSelection);
+      if (nextSelection.midiNotes.size > 0) playNotes(Array.from(nextSelection.midiNotes));
     }
-  }, [playNotes, selectedColumnKey, selectedMidiNotes, resetSelection]);
+  }, [playNotes, selected, resetSelection]);
 
   const handleTitleReady = useCallback((title: string) => {
     updateScoreNameFromTitle(currentScoreId, title);
@@ -258,12 +248,10 @@ function App() {
               data={scoreData} 
               showAllLines={showAllLines} 
               showGuideLines={showGuideLines}
-              onMeasureClick={handleMeasureClick}
+              onSelectionChange={handleSelectionChange}
               onTitleReady={handleTitleReady}
               onLoadingStateChange={handleLoadingStateChange}
-              selectedMeasureNumber={selectedMeasure?.measureNumber}
-              selectedMidiNotes={selectedMidiNotes}
-              selectedNoteX={selectedNoteX}
+              selection={selected}
               activeNotes={activeNotes}
               highlightBlackKeys={settings.highlightBlackKeys}
               visualTranspose={settings.visualTranspose}
@@ -293,8 +281,8 @@ function App() {
         <Box sx={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1100 }}>
           <PianoKeyboard 
             activeNotes={activeNotes} 
-            highlightNotes={selectedMidiNotes}
-            keySig={selectedMeasure?.keySig}
+            highlightNotes={selected?.midiNotes ?? EMPTY_NOTES}
+            keySig={selected?.measure.keySig ?? null}
           />
         </Box>
       </Box>
