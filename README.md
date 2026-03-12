@@ -1,5 +1,7 @@
 # Interactive Score Piano
 
+![Interactive Score Piano](./image.png)
+
 > **Note**
 > This application was developed using **Gemini CLI**.
 
