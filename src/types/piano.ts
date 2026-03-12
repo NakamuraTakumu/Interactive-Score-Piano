@@ -11,6 +11,7 @@ export type SoundType = 'piano' | 'synth';
 export interface PianoSettings {
   showAllLines: boolean;
   showGuideLines: boolean;
+  showMidiMatchLines: boolean;
   soundType: SoundType;
   selectedSoundFontId: string;
   gmProgram: number;

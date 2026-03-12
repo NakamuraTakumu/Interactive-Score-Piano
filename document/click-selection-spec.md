@@ -126,6 +126,22 @@ The current click-play behavior is:
 
 Because of that last point, click playback keeps the UI in the green selected state rather than switching it to the red active-note state.
 
+### 4.4 MIDI Match Indicator
+
+Live MIDI input also drives a separate score-side indicator.
+
+This indicator can be turned on and off from the settings UI and is off by default.
+
+`ScoreDisplay.tsx` groups visible notes by `(systemId, measureNumber, columnKey)` and builds a MIDI-note set for each score column.
+
+If a column's note set exactly matches the current `activeNotes` set, the score overlays a vertical red line at that notehead column.
+
+The indicator uses the same red stroke style as the existing active-note horizontal guide line.
+
+The line spans the full vertical extent of the related measure group in the same system, so on a piano grand staff it runs continuously from the upper measure through the lower measure.
+
+The implementation uses actual rendered notehead positions when available and falls back to score-coordinate estimates only when the SVG notehead element cannot be read.
+
 ## 5. Additional Notes
 
 - During drag selection updates, `forcePlay = false`, so moving within the same column does not retrigger playback repeatedly
@@ -133,6 +149,7 @@ Because of that last point, click playback keeps the UI in the green selected st
 - Even inside a measure, the selection is cleared if the nearest note column is beyond the distance threshold
 - Even inside the threshold, the selection is cleared if the chosen time column contains no notes
 - `selection.noteX` is kept only as the representative x-position of the selected column; same-column grouping does not depend on x-tolerance
+- The MIDI match indicator is independent of click selection and can appear at multiple score positions if the same note set exists more than once on screen
 
 ## Reference Implementation
 

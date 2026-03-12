@@ -263,6 +263,7 @@ function App() {
               data={scoreData} 
               showAllLines={showAllLines} 
               showGuideLines={showGuideLines}
+              showMidiMatchLines={settings.showMidiMatchLines}
               onSelectionChange={handleSelectionChange}
               onTitleReady={handleTitleReady}
               onLoadingStateChange={handleLoadingStateChange}

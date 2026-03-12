@@ -353,7 +353,11 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               />
               <FormControlLabel
                 control={<Switch size="small" checked={settings.showGuideLines} onChange={(e) => updateSetting('showGuideLines', e.target.checked)} />}
-                label={<Typography variant="body2">Guides</Typography>}
+                label={<Typography variant="body2">Horz Guides</Typography>}
+              />
+              <FormControlLabel
+                control={<Switch size="small" checked={settings.showMidiMatchLines} onChange={(e) => updateSetting('showMidiMatchLines', e.target.checked)} />}
+                label={<Typography variant="body2">Vert Guides</Typography>}
               />
               <FormControlLabel
                 control={<Switch size="small" checked={settings.highlightBlackKeys} onChange={(e) => updateSetting('highlightBlackKeys', e.target.checked)} />}

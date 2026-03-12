@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { OpenSheetMusicDisplay, PointF2D, TransposeCalculator } from 'opensheetmusicdisplay';
-import { MeasureContext, SelectionResult } from '../types/piano';
+import { MeasureContext, NoteDetail, SelectionResult } from '../types/piano';
 import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint, getColumnKeyFromTimestamp } from '../utils/osmdCoordinates';
 
 interface ScoreDisplayProps {
   data: string;
   showAllLines?: boolean;
   showGuideLines?: boolean;
+  showMidiMatchLines?: boolean;
   onSelectionChange?: (selection: SelectionResult | null, forcePlay: boolean) => void;
   onTitleReady?: (title: string) => void;
   onLoadingStateChange?: (isLoading: boolean) => void;
@@ -16,10 +17,56 @@ interface ScoreDisplayProps {
   visualTranspose?: number;
 }
 
+interface ColumnMatchCandidate {
+  key: string;
+  midiNotes: Set<number>;
+  x: number;
+  y1: number;
+  y2: number;
+}
+
+const setsEqual = (left: Set<number>, right: Set<number>): boolean => {
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+};
+
+const getNoteHeadElement = (detail: NoteDetail): SVGElement | null => {
+  const vf = detail.graphicalNote?.vfnote;
+  const realVfNote = Array.isArray(vf) ? vf[0] : vf;
+  const gveSvgGroup = realVfNote?.attrs?.el || realVfNote?.el;
+
+  if (!(gveSvgGroup instanceof SVGElement)) return null;
+
+  const noteGroup = gveSvgGroup.querySelector('.vf-note');
+  if (!noteGroup) return null;
+
+  const heads = Array.from(noteGroup.querySelectorAll('path, ellipse')).filter((el): el is SVGElement =>
+    el instanceof SVGElement && !el.classList.contains('vf-stem')
+  );
+
+  return heads[detail.index] ?? null;
+};
+
+const getRelativeNoteHeadCenterX = (detail: NoteDetail, containerRect: DOMRect): number | null => {
+  const head = getNoteHeadElement(detail);
+  if (!head) return null;
+
+  const rect = head.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return null;
+
+  const left = rect.left - containerRect.left;
+  const right = rect.right - containerRect.left;
+  return (left + right) / 2;
+};
+
 const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   data,
   showAllLines = false,
   showGuideLines = true,
+  showMidiMatchLines = false,
   onSelectionChange,
   onTitleReady,
   onLoadingStateChange,
@@ -328,6 +375,81 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     });
   }, [activeNotes, contexts, selection, highlightBlackKeys, visualTranspose]);
 
+  const matchCandidates = useMemo<ColumnMatchCandidate[]>(() => {
+    if (!showMidiMatchLines) return [];
+    const container = containerRef.current;
+    if (!container || contexts.length === 0) return [];
+
+    const containerRect = container.getBoundingClientRect();
+    const measureSpans = new Map<string, { y1: number; y2: number }>();
+    const groups = new Map<string, {
+      measureKey: string;
+      midiNotes: Set<number>;
+      xValues: number[];
+    }>();
+
+    contexts.forEach((ctx) => {
+      const measureKey = `${ctx.systemId}:${ctx.measureNumber}`;
+      const span = measureSpans.get(measureKey);
+      const y1 = ctx.y;
+      const y2 = ctx.y + ctx.height;
+
+      if (span) {
+        span.y1 = Math.min(span.y1, y1);
+        span.y2 = Math.max(span.y2, y2);
+      } else {
+        measureSpans.set(measureKey, { y1, y2 });
+      }
+    });
+
+    contexts.forEach((ctx) => {
+      ctx.noteDetails.forEach((detail) => {
+        const measureKey = `${ctx.systemId}:${ctx.measureNumber}`;
+        const key = `${ctx.systemId}:${ctx.measureNumber}:${detail.columnKey}`;
+        let group = groups.get(key);
+        if (!group) {
+          group = {
+            measureKey,
+            midiNotes: new Set<number>(),
+            xValues: []
+          };
+          groups.set(key, group);
+        }
+
+        group.midiNotes.add(detail.midi + visualTranspose);
+
+        const headCenterX = getRelativeNoteHeadCenterX(detail, containerRect);
+        if (headCenterX !== null) {
+          group.xValues.push(headCenterX);
+          return;
+        }
+
+        group.xValues.push(detail.x);
+      });
+    });
+
+    return Array.from(groups.entries()).flatMap(([key, group]) => {
+      const span = measureSpans.get(group.measureKey);
+      if (group.xValues.length === 0 || !span) {
+        return [];
+      }
+
+      const x = group.xValues.reduce((sum, value) => sum + value, 0) / group.xValues.length;
+      return [{
+        key,
+        midiNotes: group.midiNotes,
+        x,
+        y1: span.y1,
+        y2: span.y2
+      }];
+    });
+  }, [contexts, showMidiMatchLines, visualTranspose]);
+
+  const matchingColumns = useMemo(() => {
+    if (!showMidiMatchLines || activeNotes.size === 0) return [];
+    return matchCandidates.filter((candidate) => setsEqual(candidate.midiNotes, activeNotes));
+  }, [activeNotes, matchCandidates, showMidiMatchLines]);
+
   const renderLines = useMemo(() => {
     const lines: React.JSX.Element[] = [];
     if (selection !== null) {
@@ -335,6 +457,21 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         lines.push(<rect key={`sel-${ctx.systemId}-${ctx.measureNumber}-${ctx.staffId}`} x={ctx.x} y={ctx.y} width={ctx.width} height={ctx.height} fill="rgba(76, 175, 80, 0.05)" stroke="#4caf50" strokeWidth="1" pointerEvents="none" />);
       });
     }
+
+    matchingColumns.forEach((column) => {
+      lines.push(
+        <line
+          key={`match-${column.key}`}
+          x1={column.x}
+          y1={column.y1}
+          x2={column.x}
+          y2={column.y2}
+          stroke="red"
+          strokeWidth="3"
+          opacity="0.8"
+        />
+      );
+    });
     
     // ガイドラインが無効の場合は線を描画しない
     if (showGuideLines && activeNotes.size > 0) {
@@ -361,7 +498,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       });
     }
     return lines;
-  }, [activeNotes, contexts, ppu, showAllLines, selection, showGuideLines, visualTranspose]);
+  }, [activeNotes, contexts, matchingColumns, ppu, showAllLines, selection, showGuideLines, visualTranspose]);
 
   return (
     <div 

@@ -5,6 +5,7 @@ import { DEFAULT_SOUND_FONT_ID } from '../data/soundFonts';
 const DEFAULT_SETTINGS: PianoSettings = {
   showAllLines: false,
   showGuideLines: true,
+  showMidiMatchLines: false,
   soundType: 'piano',
   selectedSoundFontId: DEFAULT_SOUND_FONT_ID,
   gmProgram: 0,
