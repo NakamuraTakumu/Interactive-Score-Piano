@@ -167,11 +167,11 @@ function App() {
       return;
     }
 
-    const isDifferentX = nextSelection.noteX !== selected?.noteX;
+    const isDifferentColumn = nextSelection.columnKey !== selected?.columnKey;
     const prevMidiNotes = selected?.midiNotes ?? EMPTY_NOTES;
     const isDifferentMidi = nextSelection.midiNotes.size !== prevMidiNotes.size || 
                             Array.from(nextSelection.midiNotes).some(n => !prevMidiNotes.has(n));
-    const isNewSelection = isDifferentX || isDifferentMidi;
+    const isNewSelection = isDifferentColumn || isDifferentMidi;
 
     if (isNewSelection || forcePlay) {
       setSelected(nextSelection);

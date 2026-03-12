@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { OpenSheetMusicDisplay, TransposeCalculator } from 'opensheetmusicdisplay';
+import { OpenSheetMusicDisplay, PointF2D, TransposeCalculator } from 'opensheetmusicdisplay';
 import { MeasureContext, SelectionResult } from '../types/piano';
-import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint } from '../utils/osmdCoordinates';
+import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint, getColumnKeyFromTimestamp } from '../utils/osmdCoordinates';
 
 interface ScoreDisplayProps {
   data: string;
@@ -29,7 +29,6 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   visualTranspose = 0
 }) => {
   const NOTE_SELECTION_THRESHOLD = 20;
-  const SAME_COLUMN_TOLERANCE_PX = 6;
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const lastLoadedDataRef = useRef<string | null>(null);
@@ -37,6 +36,24 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const [contexts, setContexts] = useState<MeasureContext[]>([]);
   const [ppu, setPpu] = useState<number>(10.0);
   const [hoveredMeasure, setHoveredMeasure] = useState<MeasureContext | null>(null);
+
+  const getTimestampKeyAtClientPoint = (clientX: number, clientY: number): string | null => {
+    const graphicSheet = osmdRef.current?.GraphicSheet as any;
+    if (!graphicSheet?.domToSvg || !graphicSheet?.svgToOsmd || !graphicSheet?.tryGetTimestampFromPosition) {
+      return null;
+    }
+
+    try {
+      const domPoint = new PointF2D(clientX, clientY);
+      const svgPoint = graphicSheet.domToSvg(domPoint);
+      const osmdPoint = graphicSheet.svgToOsmd(svgPoint);
+      const timestamp = graphicSheet.tryGetTimestampFromPosition(osmdPoint);
+      return timestamp ? getColumnKeyFromTimestamp(timestamp) : null;
+    } catch (err) {
+      console.debug('OSMD timestamp hit-test failed:', err);
+      return null;
+    }
+  };
 
   const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!containerRef.current || contexts.length === 0) return;
@@ -50,13 +67,13 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
     // Execute selection logic if dragging (left button down)
     if (event.buttons === 1 && onSelectionChange) {
-      updateSelectionAtPoint(x, y, false); // 移動中は重複を避けるため forcePlay = false
+      updateSelectionAtPoint(x, y, event.clientX, event.clientY, false); // 移動中は重複を避けるため forcePlay = false
     }
   };
 
   const handleMouseLeave = () => setHoveredMeasure(null);
 
-  const updateSelectionAtPoint = (x: number, y: number, forcePlay: boolean) => {
+  const updateSelectionAtPoint = (x: number, y: number, clientX: number, clientY: number, forcePlay: boolean) => {
     if (!onSelectionChange) return;
     const clickedMeasure = getMeasureAtPoint(x, y, contexts);
     
@@ -64,34 +81,57 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       const targetMidiNotes = new Set<number>();
       let closestX: number | null = null;
       const relatedMeasures = contexts.filter(ctx => ctx.measureNumber === clickedMeasure.measureNumber && ctx.systemId === clickedMeasure.systemId);
+      const columnMap = new Map<string, number>();
 
-      let minDistance = Infinity;
       relatedMeasures.forEach(m => {
-        m.noteDetails.forEach(note => {
-          const dist = Math.abs(note.x - x);
-          if (dist < minDistance) {
-            minDistance = dist;
-            closestX = note.x;
-          }
+        m.columnDetails.forEach(column => {
+          if (!columnMap.has(column.columnKey)) columnMap.set(column.columnKey, column.x);
         });
       });
 
-      if (closestX !== null && minDistance < NOTE_SELECTION_THRESHOLD) {
+      let minDistance = Infinity;
+      let closestColumnKey = getTimestampKeyAtClientPoint(clientX, clientY);
+      if (closestColumnKey !== null) closestX = columnMap.get(closestColumnKey) ?? null;
+
+      if (closestColumnKey !== null && closestX !== null) {
+        minDistance = 0;
+      } else {
+        columnMap.forEach((columnX, columnKey) => {
+          const dist = Math.abs(columnX - x);
+          if (dist < minDistance) {
+            minDistance = dist;
+            closestX = columnX;
+            closestColumnKey = columnKey;
+          }
+        });
+      }
+
+      if (closestColumnKey !== null && minDistance < NOTE_SELECTION_THRESHOLD) {
         relatedMeasures.forEach(m => {
-          m.noteDetails.forEach((note: any) => {
-            if (Math.abs(note.x - closestX!) <= SAME_COLUMN_TOLERANCE_PX) {
+          m.noteDetails.forEach(note => {
+            if (note.columnKey === closestColumnKey) {
               // Apply visualTranspose so the generated sound matches the visual representation
               targetMidiNotes.add(note.midi + visualTranspose);
             }
           });
         });
-      } else closestX = null;
-      
-      onSelectionChange({
-        measure: clickedMeasure,
-        midiNotes: targetMidiNotes,
-        noteX: closestX
-      }, forcePlay);
+
+        if (targetMidiNotes.size === 0) {
+          onSelectionChange(null, false);
+          return;
+        }
+      }
+
+      if (closestColumnKey !== null && closestX !== null && minDistance < NOTE_SELECTION_THRESHOLD) {
+        onSelectionChange({
+          measure: clickedMeasure,
+          midiNotes: targetMidiNotes,
+          noteX: closestX,
+          columnKey: closestColumnKey
+        }, forcePlay);
+      } else {
+        onSelectionChange(null, false);
+      }
     } else {
       // 楽譜外（小節外）をクリックした場合は選択解除を通知
       onSelectionChange(null, false);
@@ -104,7 +144,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     const rect = containerRef.current.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    updateSelectionAtPoint(x, y, true); // クリック時は常に音を鳴らすため forcePlay = true
+    updateSelectionAtPoint(x, y, event.clientX, event.clientY, true); // クリック時は常に音を鳴らすため forcePlay = true
   };
 
   useEffect(() => {
@@ -215,8 +255,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         const isSelected = selection !== null &&
                            selection.measure.measureNumber === ctx.measureNumber &&
                            selection.measure.systemId === ctx.systemId &&
-                           selection.noteX !== null &&
-                           details.some(d => Math.abs(d.x - selection.noteX!) <= SAME_COLUMN_TOLERANCE_PX);
+                           selection.columnKey !== null &&
+                           details.some(d => d.columnKey === selection.columnKey);
 
         // Calculate default color for the group (chord)
         const baseColor = '#000000';

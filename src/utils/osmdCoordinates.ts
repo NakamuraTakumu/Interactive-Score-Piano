@@ -1,5 +1,5 @@
 import { OpenSheetMusicDisplay, KeyInstruction, ClefInstruction, ClefEnum } from 'opensheetmusicdisplay';
-import { MeasureContext, ClefType } from '../types/piano';
+import { ColumnDetail, MeasureContext, ClefType, NoteDetail } from '../types/piano';
 
 export const getPixelPerUnit = (osmd: OpenSheetMusicDisplay, container: HTMLElement): number => {
   const graphicSheet = osmd.GraphicSheet;
@@ -85,10 +85,23 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
 
           let minMidi: number | null = null;
           let maxMidi: number | null = null;
-          const noteDetails: { midi: number, x: number, graphicalNote: any, index: number }[] = [];
+          const columnDetailsMap = new Map<string, ColumnDetail>();
+          const noteDetails: NoteDetail[] = [];
+          const columnIndexMap = new Map<any, number>();
+
+          if (source) {
+            source.VerticalSourceStaffEntryContainers.forEach((container, index) => {
+              columnIndexMap.set(container, index);
+            });
+          }
 
           measure.staffEntries.forEach((gse, gseIndex) => {
-            const entryX = gse.PositionAndShape.AbsolutePosition.x * pixelPerUnit;
+            const absTs = gse.getAbsoluteTimestamp();
+            const [tsX] = graphicSheet.calculateXPositionFromTimestamp(absTs);
+            const entryX = (Number.isFinite(tsX) ? tsX : gse.PositionAndShape.AbsolutePosition.x) * pixelPerUnit;
+            const columnIndex = columnIndexMap.get(gse.parentVerticalContainer) ?? gseIndex;
+            const columnKey = getColumnKeyFromTimestamp(absTs, source ? source.MeasureNumber : mIdx + 1, columnIndex);
+
             gse.graphicalVoiceEntries.forEach(gve => {
               gve.notes.forEach((gn, index) => {
                 if (gn.sourceNote && gn.sourceNote.Pitch) {
@@ -99,12 +112,20 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
                   noteDetails.push({
                     midi: soundingMidi,
                     x: entryX,
+                    columnKey,
                     graphicalNote: gn,
                     index: index
                   });
                 }
               });
             });
+
+            if (!columnDetailsMap.has(columnKey)) {
+              columnDetailsMap.set(columnKey, {
+                x: entryX,
+                columnKey
+              });
+            }
           });
 
           const absMeasurePos = measure.PositionAndShape.AbsolutePosition;
@@ -126,6 +147,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
             minMidi,
             maxMidi,
             octaveShift: state.octaveShift,
+            columnDetails: Array.from(columnDetailsMap.values()),
             noteDetails
           });
 
@@ -136,6 +158,20 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
   });
   
   return contexts;
+};
+
+export const getColumnKeyFromTimestamp = (timestamp: any, fallbackMeasureNumber?: number, fallbackColumnIndex?: number): string => {
+  if (timestamp?.clone) {
+    const normalized = timestamp.clone();
+    if (normalized.simplify) normalized.simplify();
+    return `${normalized.WholeValue}:${normalized.Numerator}/${normalized.Denominator}`;
+  }
+
+  if (fallbackMeasureNumber !== undefined && fallbackColumnIndex !== undefined) {
+    return `${fallbackMeasureNumber}:${fallbackColumnIndex}`;
+  }
+
+  return '0:0/1';
 };
 
 export const getMeasureAtPoint = (x: number, y: number, contexts: MeasureContext[]): MeasureContext | null => {

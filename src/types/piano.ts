@@ -25,6 +25,19 @@ export interface PianoSettings {
   highlightBlackKeys: boolean;
 }
 
+export interface NoteDetail {
+  midi: number;
+  x: number; // 音符列の代表 x 座標（ピクセル）
+  columnKey: string; // OSMD absolute timestamp ベースの列識別子
+  graphicalNote: any; // GraphicalNote
+  index: number;
+}
+
+export interface ColumnDetail {
+  x: number; // クリック判定用の列 x 座標（ピクセル）
+  columnKey: string; // OSMD absolute timestamp ベースの列識別子
+}
+
 export interface MeasureContext {
   measureNumber: number;
   staffId: number;
@@ -40,15 +53,13 @@ export interface MeasureContext {
   minMidi: number | null;
   maxMidi: number | null;
   octaveShift: number; // 視覚的な高さ補正（半音単位）。8vaなら-12
-  noteDetails: {
-    midi: number;
-    x: number; // 音符の横位置（ピクセル）
-    graphicalNote: any; // GraphicalNote
-  }[];
+  columnDetails: ColumnDetail[];
+  noteDetails: NoteDetail[];
 }
 
 export interface SelectionResult {
   measure: MeasureContext;
   midiNotes: Set<number>;
   noteX: number | null;
+  columnKey: string | null;
 }
