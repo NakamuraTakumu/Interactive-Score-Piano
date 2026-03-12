@@ -3,7 +3,9 @@
 ![Interactive Score Piano](./image.png)
 
 > **Note**
-> This application was developed using **Gemini CLI**.
+> This application was developed using **Gemini CLI** and **Codex**.
+
+https://nakamuratakumu.github.io/Interactive-Score-Piano/
 
 ## Overview
 
