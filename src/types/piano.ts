@@ -24,6 +24,7 @@ export interface PianoSettings {
   sustainEnabled: boolean;
   velocitySensitivity: number;
   highlightBlackKeys: boolean;
+  playbackBpm: number;
 }
 
 export interface NoteDetail {
@@ -63,4 +64,33 @@ export interface SelectionResult {
   midiNotes: Set<number>;
   noteX: number | null;
   columnKey: string | null;
+}
+
+export interface ScoreRangeSelection {
+  startColumnKey: string;
+  endColumnKey: string;
+  columnKeys: string[];
+  selectedStaffKeys: string[];
+}
+
+export type PlaybackStatus = 'stopped' | 'playing' | 'paused';
+
+export interface PlaybackNoteEvent {
+  id: string;
+  type: 'note-on' | 'note-off';
+  tick: number;
+  columnKey: string;
+  measureNumber: number;
+  systemId: number;
+  staffId: number;
+  sourceMidi: number;
+  displayMidi: number;
+  durationTicks?: number;
+}
+
+export interface PlaybackTimeline {
+  ppq: number;
+  durationTicks: number;
+  events: PlaybackNoteEvent[];
+  scoreBpm?: number;
 }

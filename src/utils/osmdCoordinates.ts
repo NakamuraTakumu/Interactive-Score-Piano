@@ -1,5 +1,94 @@
 import { OpenSheetMusicDisplay, KeyInstruction, ClefInstruction, ClefEnum } from 'opensheetmusicdisplay';
-import { ColumnDetail, MeasureContext, ClefType, NoteDetail } from '../types/piano';
+import { ColumnDetail, MeasureContext, ClefType, NoteDetail, PlaybackNoteEvent, PlaybackTimeline } from '../types/piano';
+
+const PLAYBACK_PPQ = 480;
+
+const fractionToTicks = (fraction: any, ppq: number = PLAYBACK_PPQ): number | null => {
+  if (!fraction) return null;
+
+  const realValue = typeof fraction.RealValue === 'number'
+    ? fraction.RealValue
+    : typeof fraction.realValue === 'number'
+      ? fraction.realValue
+      : null;
+
+  if (realValue !== null && Number.isFinite(realValue)) {
+    return Math.max(0, Math.round(realValue * ppq * 4));
+  }
+
+  const whole = typeof fraction.WholeValue === 'number' ? fraction.WholeValue : 0;
+  const numerator = typeof fraction.Numerator === 'number' ? fraction.Numerator : 0;
+  const denominator = typeof fraction.Denominator === 'number' ? fraction.Denominator : 1;
+  if (!Number.isFinite(whole) || !Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
+    return null;
+  }
+
+  return Math.max(0, Math.round((whole + numerator / denominator) * ppq * 4));
+};
+
+const getSourceNoteDurationTicks = (sourceNote: any): number | null => {
+  const candidates = [
+    sourceNote?.Length,
+    sourceNote?.length,
+    sourceNote?.TypeLength,
+    sourceNote?.typeLength,
+  ];
+
+  for (const candidate of candidates) {
+    const ticks = fractionToTicks(candidate);
+    if (ticks !== null && ticks > 0) return ticks;
+  }
+
+  return null;
+};
+
+const shouldSkipPlaybackNote = (sourceNote: any): boolean => {
+  if (!sourceNote) return true;
+  if (typeof sourceNote.isRest === 'function' && sourceNote.isRest()) return true;
+  if (sourceNote.IsGraceNote || sourceNote.IsCueNote || sourceNote.PrintObject === false) return true;
+  return false;
+};
+
+const normalizeBpm = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
+  return Math.max(20, Math.min(300, Math.round(value)));
+};
+
+const extractScoreBpm = (osmd: OpenSheetMusicDisplay): number | undefined => {
+  const sheet: any = osmd.Sheet;
+  const candidates: unknown[] = [];
+
+  const tempoExpressions = sheet?.TimestampSortedTempoExpressionsList ?? [];
+  tempoExpressions.forEach((expression: any) => {
+    candidates.push(expression?.InstantaneousTempo?.TempoInBpm);
+    expression?.EntriesList?.forEach((entry: any) => {
+      candidates.push(entry?.Expression?.TempoInBpm);
+    });
+  });
+
+  sheet?.SourceMeasures?.forEach((measure: any) => {
+    candidates.push(measure?.TempoInBPM);
+    measure?.TempoExpressions?.forEach((expression: any) => {
+      candidates.push(expression?.InstantaneousTempo?.TempoInBpm);
+      expression?.EntriesList?.forEach((entry: any) => {
+        candidates.push(entry?.Expression?.TempoInBpm);
+      });
+    });
+  });
+
+  candidates.push(
+    sheet?.getExpressionsStartTempoInBPM?.(),
+    sheet?.DefaultStartTempoInBpm,
+    sheet?.userStartTempoInBPM,
+  );
+
+  for (const candidate of candidates) {
+    const bpm = normalizeBpm(candidate);
+    if (bpm !== null) return bpm;
+  }
+
+  return undefined;
+};
 
 export const getPixelPerUnit = (osmd: OpenSheetMusicDisplay, container: HTMLElement): number => {
   const graphicSheet = osmd.GraphicSheet;
@@ -158,6 +247,108 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
   });
   
   return contexts;
+};
+
+export const extractPlaybackTimeline = (
+  osmd: OpenSheetMusicDisplay,
+  contexts: MeasureContext[],
+  visualTranspose: number = 0
+): PlaybackTimeline => {
+  const events: PlaybackNoteEvent[] = [];
+  let durationTicks = 0;
+  const sourceNoteMap = new Map<any, { ctx: MeasureContext; detail: NoteDetail }>();
+
+  contexts.forEach((ctx) => {
+    ctx.noteDetails.forEach((detail) => {
+      const sourceNote = detail.graphicalNote?.sourceNote;
+      if (sourceNote && !sourceNoteMap.has(sourceNote)) {
+        sourceNoteMap.set(sourceNote, { ctx, detail });
+      }
+    });
+  });
+
+  const sourceMeasures = osmd.Sheet?.SourceMeasures ?? (osmd.Sheet as any)?.sourceMeasures ?? [];
+
+  sourceMeasures.forEach((measure: any, measureIndex: number) => {
+    const measureStartTicks = fractionToTicks(measure.AbsoluteTimestamp) ?? 0;
+    const measureDurationTicks = fractionToTicks(measure.Duration) ?? 0;
+    durationTicks = Math.max(durationTicks, measureStartTicks + measureDurationTicks);
+
+    measure.VerticalSourceStaffEntryContainers?.forEach((container: any, containerIndex: number) => {
+      const absoluteTimestamp = container.getAbsoluteTimestamp?.();
+      const startTicks = fractionToTicks(absoluteTimestamp) ??
+                         measureStartTicks + (fractionToTicks(container.Timestamp) ?? 0);
+      const fallbackColumnKey = getColumnKeyFromTimestamp(
+        absoluteTimestamp ?? container.Timestamp,
+        measure.MeasureNumber ?? measureIndex + 1,
+        containerIndex
+      );
+
+      container.StaffEntries?.forEach((staffEntry: any, staffIndex: number) => {
+        staffEntry?.VoiceEntries?.forEach((voiceEntry: any, voiceIndex: number) => {
+          voiceEntry?.Notes?.forEach((sourceNote: any, noteIndex: number) => {
+            if (shouldSkipPlaybackNote(sourceNote)) return;
+
+            const noteDurationTicks = getSourceNoteDurationTicks(sourceNote);
+            if (noteDurationTicks === null) return;
+
+            const mapped = sourceNoteMap.get(sourceNote);
+            const sourceMidi = mapped?.detail.midi ?? (sourceNote.Pitch ? sourceNote.Pitch.getHalfTone() + 12 : null);
+            if (sourceMidi === null) return;
+
+            const columnKey = mapped?.detail.columnKey ?? fallbackColumnKey;
+            const measureNumber = mapped?.ctx.measureNumber ?? measure.MeasureNumber ?? measureIndex + 1;
+            const systemId = mapped?.ctx.systemId ?? 0;
+            const staffId = mapped?.ctx.staffId ?? sourceNote.ParentStaff?.idInMusicSheet ?? staffIndex;
+            const endTicks = startTicks + noteDurationTicks;
+            const displayMidi = sourceMidi + visualTranspose;
+            const voiceId = voiceEntry.ParentVoice?.VoiceId ?? voiceIndex;
+            const idBase = `${measureIndex}-${containerIndex}-${staffIndex}-${voiceId}-${noteIndex}-${columnKey}-${sourceMidi}`;
+
+            events.push({
+              id: `${idBase}-on`,
+              type: 'note-on',
+              tick: startTicks,
+              columnKey,
+              measureNumber,
+              systemId,
+              staffId,
+              sourceMidi,
+              displayMidi,
+              durationTicks: noteDurationTicks,
+            });
+
+            events.push({
+              id: `${idBase}-off`,
+              type: 'note-off',
+              tick: endTicks,
+              columnKey,
+              measureNumber,
+              systemId,
+              staffId,
+              sourceMidi,
+              displayMidi,
+            });
+
+            durationTicks = Math.max(durationTicks, endTicks);
+          });
+        });
+      });
+    });
+  });
+
+  events.sort((left, right) => {
+    if (left.tick !== right.tick) return left.tick - right.tick;
+    if (left.type !== right.type) return left.type === 'note-off' ? -1 : 1;
+    return left.id.localeCompare(right.id);
+  });
+
+  return {
+    ppq: PLAYBACK_PPQ,
+    durationTicks,
+    events,
+    scoreBpm: extractScoreBpm(osmd),
+  };
 };
 
 export const getColumnKeyFromTimestamp = (timestamp: any, fallbackMeasureNumber?: number, fallbackColumnIndex?: number): string => {

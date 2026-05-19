@@ -1,4 +1,4 @@
-import { useState, useCallback, memo, useEffect } from 'react'
+import { useState, useCallback, memo, useEffect, useRef } from 'react'
 import { Box, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Backdrop, CircularProgress, Stack } from '@mui/material'
 import ScoreDisplay from './components/ScoreDisplay'
 import PianoKeyboard from './components/PianoKeyboard'
@@ -9,7 +9,7 @@ import { usePianoSound } from './hooks/usePianoSound'
 import { useWakeLock } from './hooks/useWakeLock'
 import { useScoreLibrary } from './hooks/useScoreLibrary'
 import { usePianoSettings } from './hooks/usePianoSettings'
-import { SavedScore, SelectionResult } from './types/piano'
+import { PlaybackNoteEvent, PlaybackStatus, PlaybackTimeline, SavedScore, ScoreRangeSelection, SelectionResult } from './types/piano'
 import { DEFAULT_SOUND_FONT_ID, SOUND_FONT_PRESETS, SoundFontOption } from './data/soundFonts'
 import { deleteUserSoundFont, listUserSoundFonts, saveUserSoundFont } from './utils/soundFontStorage'
 
@@ -25,6 +25,8 @@ const theme = createTheme({
 // Memoized ScoreDisplay to prevent unnecessary re-renders
 const MemoizedScoreDisplay = memo(ScoreDisplay);
 const EMPTY_NOTES = new Set<number>();
+const getPlaybackEventBaseId = (event: PlaybackNoteEvent) => event.id.replace(/-(on|off)$/, '');
+const getPlaybackEventStaffKey = (event: PlaybackNoteEvent) => `${event.systemId}:${event.measureNumber}:${event.staffId}`;
 
 function App() {
   const { settings, updateSetting, resetSettings, showAllLines, showGuideLines } = usePianoSettings();
@@ -34,7 +36,8 @@ function App() {
   const [isSoundFontOptionsReady, setIsSoundFontOptionsReady] = useState(false);
   
   const { 
-    isAudioStarted, isSamplesLoaded, audioEngine, startAudio, playNotes, handleMidiEvent
+    isAudioStarted, isSamplesLoaded, audioEngine, startAudio, playNotes,
+    playPlaybackNoteOn, playPlaybackNoteOff, stopPlaybackNotes, handleMidiEvent
   } = usePianoSound(settings, updateSetting);
 
   const { activeNotes, availableDevices, selectedDeviceId, selectDevice } = useMidi(handleMidiEvent, startAudio);
@@ -48,6 +51,26 @@ function App() {
 
   // Local State for Interaction
   const [selected, setSelected] = useState<SelectionResult | null>(null);
+  const [playbackTimeline, setPlaybackTimeline] = useState<PlaybackTimeline | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus>('stopped');
+  const [playbackTick, setPlaybackTick] = useState(0);
+  const [playbackColumnKey, setPlaybackColumnKey] = useState<string | null>(null);
+  const [playbackNotes, setPlaybackNotes] = useState<Set<number>>(new Set());
+  const [playbackStaffKeys, setPlaybackStaffKeys] = useState<Set<string>>(new Set());
+  const [playbackRangeSelection, setPlaybackRangeSelection] = useState<ScoreRangeSelection | null>(null);
+  const playbackTimerRef = useRef<number | null>(null);
+  const playbackStatusRef = useRef<PlaybackStatus>('stopped');
+  const playbackTickRef = useRef(0);
+  const playbackStartTickRef = useRef(0);
+  const playbackStartTimeRef = useRef(0);
+  const playbackNextEventIndexRef = useRef(0);
+  const playbackRangeEndTickRef = useRef<number | null>(null);
+  const playbackAllowedEventIdsRef = useRef<Set<string> | null>(null);
+  const playbackTimelineRef = useRef<PlaybackTimeline | null>(null);
+  const playbackBpmRef = useRef(settings.playbackBpm);
+  const activePlaybackNotesRef = useRef<Set<number>>(new Set());
+  const activePlaybackStaffCountsRef = useRef<Map<string, number>>(new Map());
 
   // Rename dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -72,6 +95,236 @@ function App() {
     }
   }, []);
 
+  const clearPlaybackTimer = useCallback(() => {
+    if (playbackTimerRef.current !== null) {
+      window.clearInterval(playbackTimerRef.current);
+      playbackTimerRef.current = null;
+    }
+  }, []);
+
+  const getCurrentPlaybackTick = useCallback(() => {
+    if (playbackStatusRef.current !== 'playing') return playbackTickRef.current;
+    const elapsedMs = performance.now() - playbackStartTimeRef.current;
+    const ticksPerMs = (playbackBpmRef.current * (playbackTimelineRef.current?.ppq ?? 480)) / 60000;
+    return playbackStartTickRef.current + elapsedMs * ticksPerMs;
+  }, []);
+
+  const setPlaybackTickState = useCallback((tick: number) => {
+    playbackTickRef.current = tick;
+    setPlaybackTick(tick);
+  }, []);
+
+  const clearActivePlaybackNotes = useCallback(() => {
+    activePlaybackNotesRef.current.forEach((note) => {
+      playPlaybackNoteOff(note);
+    });
+    activePlaybackNotesRef.current.clear();
+    activePlaybackStaffCountsRef.current.clear();
+    stopPlaybackNotes();
+    setPlaybackNotes(new Set());
+    setPlaybackStaffKeys(new Set());
+  }, [playPlaybackNoteOff, stopPlaybackNotes]);
+
+  const stopPlayback = useCallback((resetPosition: boolean = true) => {
+    clearPlaybackTimer();
+    clearActivePlaybackNotes();
+    playbackStatusRef.current = 'stopped';
+    setPlaybackStatus('stopped');
+    setSelected(null);
+    setPlaybackRangeSelection(null);
+    if (resetPosition) {
+      setPlaybackTickState(0);
+      playbackNextEventIndexRef.current = 0;
+      playbackRangeEndTickRef.current = null;
+      playbackAllowedEventIdsRef.current = null;
+    }
+    setPlaybackColumnKey(null);
+  }, [clearActivePlaybackNotes, clearPlaybackTimer, setPlaybackTickState]);
+
+  const pausePlayback = useCallback(() => {
+    const currentTick = getCurrentPlaybackTick();
+    clearPlaybackTimer();
+    clearActivePlaybackNotes();
+    playbackStatusRef.current = 'paused';
+    setPlaybackStatus('paused');
+    setSelected(null);
+    setPlaybackRangeSelection(null);
+    setPlaybackTickState(currentTick);
+  }, [clearActivePlaybackNotes, clearPlaybackTimer, getCurrentPlaybackTick, setPlaybackTickState]);
+
+  const finishPlayback = useCallback(() => {
+    stopPlayback(true);
+  }, [stopPlayback]);
+
+  const processPlaybackEvent = useCallback((event: PlaybackNoteEvent) => {
+    if (event.type === 'note-off') {
+      const staffKey = getPlaybackEventStaffKey(event);
+      const nextCount = (activePlaybackStaffCountsRef.current.get(staffKey) ?? 0) - 1;
+      if (nextCount > 0) activePlaybackStaffCountsRef.current.set(staffKey, nextCount);
+      else activePlaybackStaffCountsRef.current.delete(staffKey);
+      playPlaybackNoteOff(event.displayMidi);
+      activePlaybackNotesRef.current.delete(event.displayMidi);
+      setPlaybackNotes(new Set(activePlaybackNotesRef.current));
+      setPlaybackStaffKeys(new Set(activePlaybackStaffCountsRef.current.keys()));
+      if (activePlaybackNotesRef.current.size === 0) setPlaybackColumnKey(null);
+      return;
+    }
+
+    const staffKey = getPlaybackEventStaffKey(event);
+    activePlaybackStaffCountsRef.current.set(staffKey, (activePlaybackStaffCountsRef.current.get(staffKey) ?? 0) + 1);
+    void playPlaybackNoteOn(event.displayMidi);
+    activePlaybackNotesRef.current.add(event.displayMidi);
+    setPlaybackNotes(new Set(activePlaybackNotesRef.current));
+    setPlaybackStaffKeys(new Set(activePlaybackStaffCountsRef.current.keys()));
+    setPlaybackColumnKey(event.columnKey);
+  }, [playPlaybackNoteOff, playPlaybackNoteOn]);
+
+  const runPlaybackStep = useCallback(() => {
+    const timeline = playbackTimelineRef.current;
+    if (!timeline) {
+      stopPlayback(true);
+      return;
+    }
+
+    const currentTick = getCurrentPlaybackTick();
+    setPlaybackTickState(currentTick);
+
+    const rangeEndTick = playbackRangeEndTickRef.current;
+
+    while (
+      playbackNextEventIndexRef.current < timeline.events.length &&
+      timeline.events[playbackNextEventIndexRef.current].tick <= currentTick &&
+      (rangeEndTick === null || timeline.events[playbackNextEventIndexRef.current].tick <= rangeEndTick)
+    ) {
+      const nextEvent = timeline.events[playbackNextEventIndexRef.current];
+      const allowedEventIds = playbackAllowedEventIdsRef.current;
+      if (allowedEventIds === null || allowedEventIds.has(getPlaybackEventBaseId(nextEvent))) {
+        processPlaybackEvent(nextEvent);
+      }
+      playbackNextEventIndexRef.current += 1;
+    }
+
+    const reachedRangeEnd = rangeEndTick !== null && currentTick >= rangeEndTick;
+    const reachedScoreEnd = playbackNextEventIndexRef.current >= timeline.events.length && currentTick >= timeline.durationTicks;
+
+    if (reachedRangeEnd || reachedScoreEnd) {
+      finishPlayback();
+    }
+  }, [finishPlayback, getCurrentPlaybackTick, processPlaybackEvent, setPlaybackTickState, stopPlayback]);
+
+  const startPlayback = useCallback(async () => {
+    const timeline = playbackTimelineRef.current;
+    if (!timeline || timeline.events.length === 0) {
+      setPlaybackError('No playable notes for simple playback.');
+      setPlaybackRangeSelection(null);
+      return;
+    }
+
+    await startAudio();
+    const wasPaused = playbackStatusRef.current === 'paused';
+    playbackStatusRef.current = 'playing';
+    setPlaybackStatus('playing');
+    playbackStartTickRef.current = wasPaused ? playbackTickRef.current : 0;
+    playbackStartTimeRef.current = performance.now();
+    if (!wasPaused) {
+      playbackRangeEndTickRef.current = null;
+      playbackAllowedEventIdsRef.current = null;
+      playbackNextEventIndexRef.current = 0;
+      setPlaybackTickState(0);
+      setSelected(null);
+      setPlaybackRangeSelection(null);
+      setPlaybackColumnKey(null);
+      setPlaybackNotes(new Set());
+      setPlaybackStaffKeys(new Set());
+      activePlaybackNotesRef.current.clear();
+      activePlaybackStaffCountsRef.current.clear();
+    }
+
+    clearPlaybackTimer();
+    playbackTimerRef.current = window.setInterval(runPlaybackStep, 25);
+    runPlaybackStep();
+  }, [clearPlaybackTimer, runPlaybackStep, setPlaybackTickState, startAudio]);
+
+  const startRangePlayback = useCallback(async (range: ScoreRangeSelection) => {
+    const timeline = playbackTimelineRef.current;
+    if (!timeline || timeline.events.length === 0) {
+      setPlaybackError('No playable notes for simple playback.');
+      setPlaybackRangeSelection(null);
+      return;
+    }
+
+    const selectedColumnKeys = new Set(range.columnKeys);
+    const selectedStaffKeys = new Set(range.selectedStaffKeys);
+    const usesStaffFilter = selectedStaffKeys.size > 0;
+    const noteOnEvents = timeline.events.filter((event) =>
+      event.type === 'note-on' &&
+      selectedColumnKeys.has(event.columnKey) &&
+      (!usesStaffFilter || selectedStaffKeys.has(getPlaybackEventStaffKey(event)))
+    );
+
+    if (noteOnEvents.length === 0) {
+      setPlaybackError('No playable notes in the selected range.');
+      setPlaybackRangeSelection(null);
+      return;
+    }
+
+    const selectedNoteIds = new Set(noteOnEvents.map(getPlaybackEventBaseId));
+    const selectedEvents = timeline.events.filter((event) => selectedNoteIds.has(getPlaybackEventBaseId(event)));
+    const startTick = Math.min(...noteOnEvents.map((event) => event.tick));
+    const endTick = Math.max(...selectedEvents.map((event) => event.tick), startTick);
+    const startEventIndex = timeline.events.findIndex((event) => event.tick >= startTick);
+
+    await startAudio();
+    clearPlaybackTimer();
+    clearActivePlaybackNotes();
+    playbackStatusRef.current = 'playing';
+    setPlaybackStatus('playing');
+    playbackStartTickRef.current = startTick;
+    playbackStartTimeRef.current = performance.now();
+    playbackNextEventIndexRef.current = startEventIndex === -1 ? timeline.events.length : startEventIndex;
+    playbackRangeEndTickRef.current = endTick;
+    playbackAllowedEventIdsRef.current = selectedNoteIds;
+    setPlaybackTickState(startTick);
+    setSelected(null);
+    setPlaybackRangeSelection(range);
+    setPlaybackColumnKey(null);
+    setPlaybackNotes(new Set());
+    setPlaybackStaffKeys(new Set());
+    activePlaybackNotesRef.current.clear();
+    activePlaybackStaffCountsRef.current.clear();
+    setPlaybackError(null);
+
+    playbackTimerRef.current = window.setInterval(runPlaybackStep, 25);
+    runPlaybackStep();
+  }, [clearActivePlaybackNotes, clearPlaybackTimer, runPlaybackStep, setPlaybackTickState, startAudio]);
+
+  const togglePlayback = useCallback(async () => {
+    if (playbackStatusRef.current === 'playing') {
+      pausePlayback();
+      return;
+    }
+    await startPlayback();
+  }, [pausePlayback, startPlayback]);
+
+  const handlePlaybackTimelineReady = useCallback((timeline: PlaybackTimeline | null, error?: string) => {
+    stopPlayback(true);
+    playbackTimelineRef.current = timeline;
+    setPlaybackTimeline(timeline);
+    if (error) {
+      setPlaybackError(error);
+      return;
+    }
+    if (!timeline || timeline.events.length === 0) {
+      setPlaybackError('No playable notes for simple playback.');
+      return;
+    }
+    if (typeof timeline.scoreBpm === 'number' && timeline.scoreBpm !== settings.playbackBpm) {
+      updateSetting('playbackBpm', timeline.scoreBpm);
+      playbackBpmRef.current = timeline.scoreBpm;
+    }
+    setPlaybackError(null);
+  }, [settings.playbackBpm, stopPlayback, updateSetting]);
+
   useEffect(() => {
     void refreshUserSoundFonts();
   }, [refreshUserSoundFonts]);
@@ -84,6 +337,23 @@ function App() {
       updateSetting('selectedSoundFontId', DEFAULT_SOUND_FONT_ID);
     }
   }, [settings.selectedSoundFontId, soundFontOptions, isSoundFontOptionsReady, updateSetting]);
+
+  useEffect(() => {
+    const currentTick = getCurrentPlaybackTick();
+    playbackBpmRef.current = settings.playbackBpm;
+    if (playbackStatusRef.current === 'playing') {
+      playbackStartTickRef.current = currentTick;
+      playbackStartTimeRef.current = performance.now();
+      setPlaybackTickState(currentTick);
+    }
+  }, [getCurrentPlaybackTick, settings.playbackBpm, setPlaybackTickState]);
+
+  useEffect(() => {
+    return () => {
+      clearPlaybackTimer();
+      clearActivePlaybackNotes();
+    };
+  }, [clearActivePlaybackNotes, clearPlaybackTimer]);
 
   // Keep screen awake when MIDI activity is detected
   useEffect(() => {
@@ -101,6 +371,7 @@ function App() {
   }, []);
 
   const onScoreChangeWrapper = (id: string) => {
+    stopPlayback(true);
     handleScoreChange(id, resetSelection);
   };
   
@@ -120,6 +391,7 @@ function App() {
 
   const handleDeleteScoreWrapper = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
+    stopPlayback(true);
     handleDeleteScore(id);
     if (currentScoreId === id) resetSelection();
   };
@@ -175,9 +447,19 @@ function App() {
 
     if (isNewSelection || forcePlay) {
       setSelected(nextSelection);
-      if (nextSelection.midiNotes.size > 0) playNotes(Array.from(nextSelection.midiNotes));
+      if (forcePlay && nextSelection.midiNotes.size > 0) playNotes(Array.from(nextSelection.midiNotes));
     }
   }, [playNotes, selected, resetSelection]);
+
+  const handleRangeSelectionComplete = useCallback((range: ScoreRangeSelection) => {
+    void startRangePlayback(range);
+  }, [startRangePlayback]);
+
+  const handleRangeSelectionStart = useCallback(() => {
+    if (playbackRangeSelection !== null && playbackStatusRef.current === 'playing') {
+      stopPlayback(true);
+    }
+  }, [playbackRangeSelection, stopPlayback]);
 
   const handleTitleReady = useCallback((title: string) => {
     updateScoreNameFromTitle(currentScoreId, title);
@@ -186,6 +468,17 @@ function App() {
   const handleLoadingStateChange = useCallback((loading: boolean) => {
     setIsLoading(loading);
   }, [setIsLoading]);
+
+  const canPlayback = Boolean(
+    scoreData &&
+    playbackTimeline &&
+    playbackTimeline.events.length > 0 &&
+    (!isAudioStarted || isSamplesLoaded) &&
+    !playbackError
+  );
+
+  const keyboardHighlightNotes = new Set(selected?.midiNotes ?? EMPTY_NOTES);
+  playbackNotes.forEach((note) => keyboardHighlightNotes.add(note));
 
   // Initialize audio context on first interaction
   useEffect(() => {
@@ -236,7 +529,10 @@ function App() {
             onResetSettings={resetSettings}
             isAudioStarted={isAudioStarted}
             onStartAudio={startAudio}
-            onFileUpload={(e) => handleFileUpload(e, resetSelection)}
+            onFileUpload={(e) => {
+              stopPlayback(true);
+              handleFileUpload(e, resetSelection);
+            }}
             soundFontOptions={soundFontOptions}
             onSoundFontUpload={handleSoundFontUpload}
             onDeleteSoundFont={handleSoundFontDelete}
@@ -246,6 +542,11 @@ function App() {
             selectedMidiDeviceId={selectedDeviceId}
             onMidiDeviceChange={selectDevice}
             activeNotes={activeNotes}
+            playbackStatus={playbackStatus}
+            canPlayback={canPlayback}
+            playbackError={playbackError}
+            onTogglePlayback={togglePlayback}
+            onStopPlayback={() => stopPlayback(true)}
           />
 
           <Paper 
@@ -265,10 +566,17 @@ function App() {
               showGuideLines={showGuideLines}
               showMidiMatchLines={settings.showMidiMatchLines}
               onSelectionChange={handleSelectionChange}
+              onRangeSelectionStart={handleRangeSelectionStart}
+              onRangeSelectionComplete={handleRangeSelectionComplete}
               onTitleReady={handleTitleReady}
               onLoadingStateChange={handleLoadingStateChange}
+              onPlaybackTimelineReady={handlePlaybackTimelineReady}
               selection={selected}
               activeNotes={activeNotes}
+              playbackColumnKey={playbackColumnKey}
+              playbackNotes={playbackNotes}
+              playbackStaffKeys={playbackStaffKeys}
+              playbackRangeSelection={playbackRangeSelection}
               highlightBlackKeys={settings.highlightBlackKeys}
               visualTranspose={settings.visualTranspose}
             />
@@ -297,7 +605,7 @@ function App() {
         <Box sx={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1100 }}>
           <PianoKeyboard 
             activeNotes={activeNotes} 
-            highlightNotes={selected?.midiNotes ?? EMPTY_NOTES}
+            highlightNotes={keyboardHighlightNotes}
             keySig={selected?.measure.keySig ?? null}
           />
         </Box>

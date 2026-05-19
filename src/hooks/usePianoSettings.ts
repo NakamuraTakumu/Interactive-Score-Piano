@@ -17,7 +17,8 @@ const DEFAULT_SETTINGS: PianoSettings = {
   visualTranspose: 0,
   sustainEnabled: false,
   velocitySensitivity: 1,
-  highlightBlackKeys: true
+  highlightBlackKeys: true,
+  playbackBpm: 100
 };
 
 export const usePianoSettings = () => {

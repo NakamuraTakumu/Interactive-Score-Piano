@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { OpenSheetMusicDisplay, PointF2D, TransposeCalculator } from 'opensheetmusicdisplay';
-import { MeasureContext, NoteDetail, SelectionResult } from '../types/piano';
-import { extractMeasureContexts, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint, getColumnKeyFromTimestamp } from '../utils/osmdCoordinates';
+import { MeasureContext, NoteDetail, PlaybackTimeline, ScoreRangeSelection, SelectionResult } from '../types/piano';
+import { extractMeasureContexts, extractPlaybackTimeline, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint, getColumnKeyFromTimestamp } from '../utils/osmdCoordinates';
 
 interface ScoreDisplayProps {
   data: string;
@@ -9,10 +9,17 @@ interface ScoreDisplayProps {
   showGuideLines?: boolean;
   showMidiMatchLines?: boolean;
   onSelectionChange?: (selection: SelectionResult | null, forcePlay: boolean) => void;
+  onRangeSelectionStart?: () => void;
+  onRangeSelectionComplete?: (range: ScoreRangeSelection) => void;
   onTitleReady?: (title: string) => void;
   onLoadingStateChange?: (isLoading: boolean) => void;
+  onPlaybackTimelineReady?: (timeline: PlaybackTimeline | null, error?: string) => void;
   selection?: SelectionResult | null;
   activeNotes?: Set<number>;
+  playbackColumnKey?: string | null;
+  playbackNotes?: Set<number>;
+  playbackStaffKeys?: Set<string>;
+  playbackRangeSelection?: ScoreRangeSelection | null;
   highlightBlackKeys?: boolean;
   visualTranspose?: number;
 }
@@ -24,6 +31,49 @@ interface ColumnMatchCandidate {
   y1: number;
   y2: number;
 }
+
+interface OrderedColumn {
+  columnKey: string;
+  x: number;
+  y1: number;
+  y2: number;
+  timestampValue: number | null;
+}
+
+interface ColumnHitResult {
+  measure: MeasureContext;
+  columnKey: string;
+  x: number;
+}
+
+interface DragPoint {
+  x: number;
+  y: number;
+}
+
+interface RangeSpan {
+  key: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const getColumnKeyTimestampValue = (columnKey: string): number | null => {
+  const match = columnKey.match(/^(-?\d+):(-?\d+)\/(\d+)$/);
+  if (!match) return null;
+
+  const whole = Number(match[1]);
+  const numerator = Number(match[2]);
+  const denominator = Number(match[3]);
+  if (!Number.isFinite(whole) || !Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
+    return null;
+  }
+
+  return whole + numerator / denominator;
+};
+
+const getStaffKey = (ctx: MeasureContext): string => `${ctx.systemId}:${ctx.measureNumber}:${ctx.staffId}`;
 
 const setsEqual = (left: Set<number>, right: Set<number>): boolean => {
   if (left.size !== right.size) return false;
@@ -68,10 +118,16 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   showGuideLines = true,
   showMidiMatchLines = false,
   onSelectionChange,
+  onRangeSelectionStart,
+  onRangeSelectionComplete,
   onTitleReady,
   onLoadingStateChange,
-  selection = null,
+  onPlaybackTimelineReady,
   activeNotes = new Set(),
+  playbackColumnKey = null,
+  playbackNotes = new Set(),
+  playbackStaffKeys = new Set(),
+  playbackRangeSelection = null,
   highlightBlackKeys = true,
   visualTranspose = 0
 }) => {
@@ -83,6 +139,217 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const [contexts, setContexts] = useState<MeasureContext[]>([]);
   const [ppu, setPpu] = useState<number>(10.0);
   const [hoveredMeasure, setHoveredMeasure] = useState<MeasureContext | null>(null);
+  const [dragRange, setDragRange] = useState<ScoreRangeSelection | null>(null);
+  const dragStartColumnRef = useRef<ColumnHitResult | null>(null);
+  const lastDragColumnRef = useRef<ColumnHitResult | null>(null);
+  const dragStartPointRef = useRef<DragPoint | null>(null);
+  const lastDragPointRef = useRef<DragPoint | null>(null);
+  const dragMovedRef = useRef(false);
+  const suppressNextClickRef = useRef(false);
+
+  const playbackSelection = useMemo<SelectionResult | null>(() => {
+    if (!playbackColumnKey || contexts.length === 0) return null;
+
+    const measure = contexts.find((ctx) =>
+      ctx.columnDetails.some((column) => column.columnKey === playbackColumnKey) ||
+      ctx.noteDetails.some((detail) => detail.columnKey === playbackColumnKey)
+    );
+    if (!measure) return null;
+
+    const relatedMeasures = contexts.filter((ctx) =>
+      ctx.measureNumber === measure.measureNumber &&
+      ctx.systemId === measure.systemId
+    );
+    const midiNotes = new Set<number>();
+    const xValues: number[] = [];
+
+    relatedMeasures.forEach((ctx) => {
+      ctx.noteDetails.forEach((detail) => {
+        if (detail.columnKey !== playbackColumnKey) return;
+        midiNotes.add(detail.midi + visualTranspose);
+        xValues.push(detail.x);
+      });
+      ctx.columnDetails.forEach((column) => {
+        if (column.columnKey === playbackColumnKey) xValues.push(column.x);
+      });
+    });
+
+    if (midiNotes.size === 0) return null;
+
+    return {
+      measure,
+      midiNotes,
+      noteX: xValues.length > 0 ? xValues.reduce((sum, value) => sum + value, 0) / xValues.length : null,
+      columnKey: playbackColumnKey,
+    };
+  }, [contexts, playbackColumnKey, visualTranspose]);
+
+  const activeRange = dragRange ?? playbackRangeSelection;
+  const displaySelection = playbackSelection;
+
+  const orderedColumns = useMemo<OrderedColumn[]>(() => {
+    const groupedColumns = new Map<string, { xValues: number[]; y1: number; y2: number }>();
+
+    contexts.forEach((ctx) => {
+      ctx.columnDetails.forEach((column) => {
+        const existing = groupedColumns.get(column.columnKey);
+        if (existing) {
+          existing.xValues.push(column.x);
+          existing.y1 = Math.min(existing.y1, ctx.y);
+          existing.y2 = Math.max(existing.y2, ctx.y + ctx.height);
+          return;
+        }
+
+        groupedColumns.set(column.columnKey, {
+          xValues: [column.x],
+          y1: ctx.y,
+          y2: ctx.y + ctx.height
+        });
+      });
+    });
+
+    return Array.from(groupedColumns.entries())
+      .map(([columnKey, column]) => ({
+        columnKey,
+        x: column.xValues.reduce((sum, value) => sum + value, 0) / column.xValues.length,
+        y1: column.y1,
+        y2: column.y2,
+        timestampValue: getColumnKeyTimestampValue(columnKey)
+      }))
+      .sort((left, right) => {
+        if (left.timestampValue !== null && right.timestampValue !== null && left.timestampValue !== right.timestampValue) {
+          return left.timestampValue - right.timestampValue;
+        }
+        if (left.timestampValue !== null && right.timestampValue === null) return -1;
+        if (left.timestampValue === null && right.timestampValue !== null) return 1;
+        if (left.y1 !== right.y1) return left.y1 - right.y1;
+        if (left.x !== right.x) return left.x - right.x;
+        return left.columnKey.localeCompare(right.columnKey);
+      });
+  }, [contexts]);
+
+  const columnIndexByKey = useMemo(() => {
+    const indexMap = new Map<string, number>();
+    orderedColumns.forEach((column, index) => indexMap.set(column.columnKey, index));
+    return indexMap;
+  }, [orderedColumns]);
+
+  const getRangeColumnKeys = (startColumnKey: string, endColumnKey: string): string[] => {
+    const startIndex = columnIndexByKey.get(startColumnKey);
+    const endIndex = columnIndexByKey.get(endColumnKey);
+    if (startIndex === undefined || endIndex === undefined) return [];
+
+    const from = Math.min(startIndex, endIndex);
+    const to = Math.max(startIndex, endIndex);
+    return orderedColumns.slice(from, to + 1).map((column) => column.columnKey);
+  };
+
+  const getSelectedStaffKeys = (
+    columnKeys: string[],
+    startColumn: ColumnHitResult,
+    endColumn: ColumnHitResult,
+    startPoint: DragPoint,
+    endPoint: DragPoint
+  ): string[] => {
+    const selectedKeys = new Set(columnKeys);
+    const selectedStaffKeys = new Set<string>([
+      getStaffKey(startColumn.measure),
+      getStaffKey(endColumn.measure)
+    ]);
+    const y1 = Math.min(startPoint.y, endPoint.y);
+    const y2 = Math.max(startPoint.y, endPoint.y);
+    const verticalPadding = 2;
+
+    contexts.forEach((ctx) => {
+      if (!ctx.columnDetails.some((column) => selectedKeys.has(column.columnKey))) return;
+      const staffTop = ctx.y;
+      const staffBottom = ctx.y + ctx.height;
+      if (staffBottom >= y1 - verticalPadding && staffTop <= y2 + verticalPadding) {
+        selectedStaffKeys.add(getStaffKey(ctx));
+      }
+    });
+
+    return Array.from(selectedStaffKeys);
+  };
+
+  const rangeSpans = useMemo<RangeSpan[]>(() => {
+    if (!activeRange) return [];
+    const selectedKeys = new Set(activeRange.columnKeys);
+    const selectedStaffKeys = new Set(activeRange.selectedStaffKeys);
+    const usesStaffFilter = selectedStaffKeys.size > 0;
+    const firstColumnKey = activeRange.columnKeys[0];
+    const lastColumnKey = activeRange.columnKeys[activeRange.columnKeys.length - 1];
+    const groups = new Map<string, {
+      measureNumber: number;
+      systemId: number;
+      staffId: number;
+      measureX1: number;
+      measureX2: number;
+      y1: number;
+      y2: number;
+      columnXValues: Map<string, number[]>;
+    }>();
+
+    contexts.forEach((ctx) => {
+      if (usesStaffFilter && !selectedStaffKeys.has(getStaffKey(ctx))) return;
+      const selectedColumns = ctx.columnDetails.filter((column) => selectedKeys.has(column.columnKey));
+      if (selectedColumns.length === 0) return;
+
+      const key = getStaffKey(ctx);
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          measureNumber: ctx.measureNumber,
+          systemId: ctx.systemId,
+          staffId: ctx.staffId,
+          measureX1: ctx.x,
+          measureX2: ctx.x + ctx.width,
+          y1: ctx.y,
+          y2: ctx.y + ctx.height,
+          columnXValues: new Map<string, number[]>(),
+        };
+        groups.set(key, group);
+      } else {
+        group.measureX1 = Math.min(group.measureX1, ctx.x);
+        group.measureX2 = Math.max(group.measureX2, ctx.x + ctx.width);
+        group.y1 = Math.min(group.y1, ctx.y);
+        group.y2 = Math.max(group.y2, ctx.y + ctx.height);
+      }
+
+      selectedColumns.forEach((column) => {
+        const values = group!.columnXValues.get(column.columnKey) ?? [];
+        values.push(column.x);
+        group!.columnXValues.set(column.columnKey, values);
+      });
+    });
+
+    return Array.from(groups.values()).map((group) => {
+      const columnX = new Map<string, number>();
+      group.columnXValues.forEach((values, key) => {
+        columnX.set(key, values.reduce((sum, value) => sum + value, 0) / values.length);
+      });
+
+      const xValues = Array.from(columnX.values());
+      const firstX = firstColumnKey ? columnX.get(firstColumnKey) : undefined;
+      const lastX = lastColumnKey ? columnX.get(lastColumnKey) : undefined;
+      const rawX1 = firstX ?? group.measureX1;
+      const rawX2 = lastX ?? group.measureX2;
+      const x1 = Math.max(group.measureX1, Math.min(rawX1, rawX2) - 6);
+      const x2 = Math.min(group.measureX2, Math.max(rawX1, rawX2) + 6);
+      const fallbackX1 = Math.max(group.measureX1, Math.min(...xValues) - 6);
+      const fallbackX2 = Math.min(group.measureX2, Math.max(...xValues) + 6);
+      const left = Number.isFinite(x1) ? x1 : fallbackX1;
+      const right = Number.isFinite(x2) ? x2 : fallbackX2;
+
+      return {
+        key: `range-${group.systemId}-${group.measureNumber}-${group.staffId}`,
+        x: left,
+        y: group.y1,
+        width: Math.max(8, right - left),
+        height: group.y2 - group.y1,
+      };
+    });
+  }, [activeRange, contexts]);
 
   const getTimestampKeyAtClientPoint = (clientX: number, clientY: number): string | null => {
     const graphicSheet = osmdRef.current?.GraphicSheet as any;
@@ -102,6 +369,129 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     }
   };
 
+  const getColumnAtPoint = (
+    x: number,
+    y: number,
+    clientX: number,
+    clientY: number,
+    requireThreshold: boolean
+  ): ColumnHitResult | null => {
+    const clickedMeasure = getMeasureAtPoint(x, y, contexts);
+
+    if (!clickedMeasure) return null;
+
+    let closestX: number | null = null;
+    const relatedMeasures = contexts.filter(ctx => ctx.measureNumber === clickedMeasure.measureNumber && ctx.systemId === clickedMeasure.systemId);
+    const columnMap = new Map<string, number>();
+
+    relatedMeasures.forEach(m => {
+      m.columnDetails.forEach(column => {
+        if (!columnMap.has(column.columnKey)) columnMap.set(column.columnKey, column.x);
+      });
+    });
+
+    let minDistance = Infinity;
+    let closestColumnKey = getTimestampKeyAtClientPoint(clientX, clientY);
+    if (closestColumnKey !== null) closestX = columnMap.get(closestColumnKey) ?? null;
+
+    if (closestColumnKey !== null && closestX !== null) {
+      minDistance = 0;
+    } else {
+      columnMap.forEach((columnX, columnKey) => {
+        const dist = Math.abs(columnX - x);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestX = columnX;
+          closestColumnKey = columnKey;
+        }
+      });
+    }
+
+    if (
+      closestColumnKey === null ||
+      closestX === null ||
+      (requireThreshold && minDistance >= NOTE_SELECTION_THRESHOLD)
+    ) {
+      return null;
+    }
+
+    return {
+      measure: clickedMeasure,
+      columnKey: closestColumnKey,
+      x: closestX
+    };
+  };
+
+  const getSelectionForColumn = (hit: ColumnHitResult | null): SelectionResult | null => {
+    if (!hit) return null;
+
+    const targetMidiNotes = new Set<number>();
+    const relatedMeasures = contexts.filter(ctx => ctx.measureNumber === hit.measure.measureNumber && ctx.systemId === hit.measure.systemId);
+
+    relatedMeasures.forEach(m => {
+      m.noteDetails.forEach(note => {
+        if (note.columnKey === hit.columnKey) {
+          targetMidiNotes.add(note.midi + visualTranspose);
+        }
+      });
+    });
+
+    if (targetMidiNotes.size === 0) return null;
+
+    return {
+      measure: hit.measure,
+      midiNotes: targetMidiNotes,
+      noteX: hit.x,
+      columnKey: hit.columnKey
+    };
+  };
+
+  const getSelectionAtPoint = (
+    x: number,
+    y: number,
+    clientX: number,
+    clientY: number,
+    requireThreshold: boolean
+  ): SelectionResult | null => {
+    return getSelectionForColumn(getColumnAtPoint(x, y, clientX, clientY, requireThreshold));
+  };
+
+  const updateSelectionAtPoint = (x: number, y: number, clientX: number, clientY: number, forcePlay: boolean) => {
+    if (!onSelectionChange) return;
+    onSelectionChange(getSelectionAtPoint(x, y, clientX, clientY, true), forcePlay);
+  };
+
+  const handleMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !containerRef.current || contexts.length === 0) return;
+    event.stopPropagation();
+
+    const rect = containerRef.current.getBoundingClientRect();
+    onRangeSelectionStart?.();
+    const columnAtStart = getColumnAtPoint(
+      event.clientX - rect.left,
+      event.clientY - rect.top,
+      event.clientX,
+      event.clientY,
+      false
+    );
+    dragStartColumnRef.current = columnAtStart;
+    lastDragColumnRef.current = columnAtStart;
+    dragStartPointRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    lastDragPointRef.current = dragStartPointRef.current;
+    dragMovedRef.current = false;
+
+    if (columnAtStart?.columnKey) {
+      setDragRange({
+        startColumnKey: columnAtStart.columnKey,
+        endColumnKey: columnAtStart.columnKey,
+        columnKeys: [columnAtStart.columnKey],
+        selectedStaffKeys: [getStaffKey(columnAtStart.measure)]
+      });
+    } else {
+      setDragRange(null);
+    }
+  };
+
   const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!containerRef.current || contexts.length === 0) return;
     const rect = containerRef.current.getBoundingClientRect();
@@ -112,81 +502,76 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     const measure = getMeasureAtPoint(x, y, contexts);
     if (measure !== hoveredMeasure) setHoveredMeasure(measure);
 
-    // Execute selection logic if dragging (left button down)
-    if (event.buttons === 1 && onSelectionChange) {
-      updateSelectionAtPoint(x, y, event.clientX, event.clientY, false); // 移動中は重複を避けるため forcePlay = false
+    if (event.buttons === 1 && dragStartColumnRef.current?.columnKey) {
+      const currentColumn = getColumnAtPoint(x, y, event.clientX, event.clientY, false);
+      if (currentColumn?.columnKey) {
+        const startColumnKey = dragStartColumnRef.current.columnKey;
+        const rangeColumnKeys = getRangeColumnKeys(startColumnKey, currentColumn.columnKey);
+        const nextColumnKeys = rangeColumnKeys.length > 0 ? rangeColumnKeys : [startColumnKey];
+        const startPoint = dragStartPointRef.current ?? { x, y };
+        const currentPoint = { x, y };
+        lastDragColumnRef.current = currentColumn;
+        lastDragPointRef.current = currentPoint;
+        dragMovedRef.current = dragMovedRef.current || currentColumn.columnKey !== startColumnKey;
+        setDragRange({
+          startColumnKey,
+          endColumnKey: currentColumn.columnKey,
+          columnKeys: nextColumnKeys,
+          selectedStaffKeys: getSelectedStaffKeys(
+            nextColumnKeys,
+            dragStartColumnRef.current,
+            currentColumn,
+            startPoint,
+            currentPoint
+          )
+        });
+      }
     }
   };
 
   const handleMouseLeave = () => setHoveredMeasure(null);
 
-  const updateSelectionAtPoint = (x: number, y: number, clientX: number, clientY: number, forcePlay: boolean) => {
-    if (!onSelectionChange) return;
-    const clickedMeasure = getMeasureAtPoint(x, y, contexts);
-    
-    if (clickedMeasure) {
-      const targetMidiNotes = new Set<number>();
-      let closestX: number | null = null;
-      const relatedMeasures = contexts.filter(ctx => ctx.measureNumber === clickedMeasure.measureNumber && ctx.systemId === clickedMeasure.systemId);
-      const columnMap = new Map<string, number>();
+  const handleMouseUp = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const startColumn = dragStartColumnRef.current;
+    const endColumn = lastDragColumnRef.current;
+    const startPoint = dragStartPointRef.current;
+    const endPoint = lastDragPointRef.current;
 
-      relatedMeasures.forEach(m => {
-        m.columnDetails.forEach(column => {
-          if (!columnMap.has(column.columnKey)) columnMap.set(column.columnKey, column.x);
-        });
-      });
+    dragStartColumnRef.current = null;
+    lastDragColumnRef.current = null;
+    dragStartPointRef.current = null;
+    lastDragPointRef.current = null;
+    setDragRange(null);
 
-      let minDistance = Infinity;
-      let closestColumnKey = getTimestampKeyAtClientPoint(clientX, clientY);
-      if (closestColumnKey !== null) closestX = columnMap.get(closestColumnKey) ?? null;
+    if (!startColumn?.columnKey || !endColumn?.columnKey || !startPoint || !endPoint) return;
 
-      if (closestColumnKey !== null && closestX !== null) {
-        minDistance = 0;
-      } else {
-        columnMap.forEach((columnX, columnKey) => {
-          const dist = Math.abs(columnX - x);
-          if (dist < minDistance) {
-            minDistance = dist;
-            closestX = columnX;
-            closestColumnKey = columnKey;
-          }
-        });
-      }
+    const isRangeGesture = dragMovedRef.current ||
+      startColumn.columnKey !== endColumn.columnKey ||
+      startColumn.measure.staffId !== endColumn.measure.staffId;
+    dragMovedRef.current = false;
+    if (!isRangeGesture) return;
 
-      if (closestColumnKey !== null && minDistance < NOTE_SELECTION_THRESHOLD) {
-        relatedMeasures.forEach(m => {
-          m.noteDetails.forEach(note => {
-            if (note.columnKey === closestColumnKey) {
-              // Apply visualTranspose so the generated sound matches the visual representation
-              targetMidiNotes.add(note.midi + visualTranspose);
-            }
-          });
-        });
+    const rangeColumnKeys = getRangeColumnKeys(startColumn.columnKey, endColumn.columnKey);
+    if (rangeColumnKeys.length === 0) return;
 
-        if (targetMidiNotes.size === 0) {
-          onSelectionChange(null, false);
-          return;
-        }
-      }
+    const nextRange = {
+      startColumnKey: startColumn.columnKey,
+      endColumnKey: endColumn.columnKey,
+      columnKeys: rangeColumnKeys,
+      selectedStaffKeys: getSelectedStaffKeys(rangeColumnKeys, startColumn, endColumn, startPoint, endPoint)
+    };
 
-      if (closestColumnKey !== null && closestX !== null && minDistance < NOTE_SELECTION_THRESHOLD) {
-        onSelectionChange({
-          measure: clickedMeasure,
-          midiNotes: targetMidiNotes,
-          noteX: closestX,
-          columnKey: closestColumnKey
-        }, forcePlay);
-      } else {
-        onSelectionChange(null, false);
-      }
-    } else {
-      // 楽譜外（小節外）をクリックした場合は選択解除を通知
-      onSelectionChange(null, false);
-    }
+    suppressNextClickRef.current = true;
+    onRangeSelectionComplete?.(nextRange);
   };
 
   const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     event.stopPropagation(); // App 側の onClick (resetSelection) が呼ばれないようにする
+    if (suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
     if (!containerRef.current || contexts.length === 0) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -253,6 +638,16 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         const ctxs = extractMeasureContexts(osmd, pixelPerUnit);
         setPpu(pixelPerUnit);
         setContexts(ctxs);
+        setDragRange(null);
+
+        if (onPlaybackTimelineReady) {
+          try {
+            onPlaybackTimelineReady(extractPlaybackTimeline(osmd, ctxs, visualTranspose));
+          } catch (error) {
+            console.error('Playback timeline extraction failed:', error);
+            onPlaybackTimelineReady(null, 'Unable to prepare simple playback for this score.');
+          }
+        }
 
         const title = osmd.Sheet?.TitleString;
         if (title && onTitleReady) {
@@ -265,7 +660,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       }
     };
     update();
-  }, [data, onTitleReady, onLoadingStateChange, visualTranspose]);
+  }, [data, onTitleReady, onLoadingStateChange, onPlaybackTimelineReady, visualTranspose]);
 
   useEffect(() => {
     if (!containerRef.current || !osmdRef.current) return;
@@ -277,6 +672,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       const ctxs = extractMeasureContexts(osmd, pixelPerUnit);
       setPpu(pixelPerUnit);
       setContexts(ctxs);
+      setDragRange(null);
     };
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) { if (entry.contentRect.width > 0) handleResize(); }
@@ -299,12 +695,11 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       });
 
       gveMap.forEach((details, gve) => {
-        const isSelected = selection !== null &&
-                           selection.measure.measureNumber === ctx.measureNumber &&
-                           selection.measure.systemId === ctx.systemId &&
-                           selection.columnKey !== null &&
-                           details.some(d => d.columnKey === selection.columnKey);
-
+        const isSelected = displaySelection !== null &&
+                           displaySelection.measure.measureNumber === ctx.measureNumber &&
+                           displaySelection.measure.systemId === ctx.systemId &&
+                           displaySelection.columnKey !== null &&
+                           details.some(d => d.columnKey === displaySelection.columnKey);
         // Calculate default color for the group (chord)
         const baseColor = '#000000';
 
@@ -360,7 +755,12 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
                 if (activeNotes.has(realMidi)) {
                   noteColor = '#ff0000';
-                } else if (isSelected && selection?.midiNotes.has(realMidi)) {
+                } else if (
+                  isSelected &&
+                  detail.columnKey === playbackColumnKey &&
+                  (playbackStaffKeys.size === 0 || playbackStaffKeys.has(getStaffKey(ctx))) &&
+                  playbackNotes.has(realMidi)
+                ) {
                   noteColor = '#4caf50';
                 }
 
@@ -373,7 +773,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         }
       });
     });
-  }, [activeNotes, contexts, selection, highlightBlackKeys, visualTranspose]);
+  }, [activeNotes, contexts, displaySelection, highlightBlackKeys, playbackColumnKey, playbackNotes, playbackStaffKeys, visualTranspose]);
 
   const matchCandidates = useMemo<ColumnMatchCandidate[]>(() => {
     if (!showMidiMatchLines) return [];
@@ -452,11 +852,21 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
   const renderLines = useMemo(() => {
     const lines: React.JSX.Element[] = [];
-    if (selection !== null) {
-      contexts.filter(ctx => ctx.measureNumber === selection.measure.measureNumber && ctx.systemId === selection.measure.systemId).forEach(ctx => {
-        lines.push(<rect key={`sel-${ctx.systemId}-${ctx.measureNumber}-${ctx.staffId}`} x={ctx.x} y={ctx.y} width={ctx.width} height={ctx.height} fill="rgba(76, 175, 80, 0.05)" stroke="#4caf50" strokeWidth="1" pointerEvents="none" />);
-      });
-    }
+    rangeSpans.forEach((span) => {
+      lines.push(
+        <rect
+          key={span.key}
+          x={span.x}
+          y={span.y}
+          width={span.width}
+          height={span.height}
+          fill="rgba(76, 175, 80, 0.12)"
+          stroke="rgba(76, 175, 80, 0.7)"
+          strokeWidth="1"
+          pointerEvents="none"
+        />
+      );
+    });
 
     matchingColumns.forEach((column) => {
       lines.push(
@@ -498,7 +908,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       });
     }
     return lines;
-  }, [activeNotes, contexts, matchingColumns, ppu, showAllLines, selection, showGuideLines, visualTranspose]);
+  }, [activeNotes, contexts, matchingColumns, ppu, rangeSpans, showAllLines, showGuideLines, visualTranspose]);
 
   return (
     <div 
@@ -512,7 +922,9 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         MozUserSelect: 'none',
         msUserSelect: 'none'
       }} 
+      onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove} 
+      onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave} 
       onClick={handleClick}
     >

@@ -9,11 +9,14 @@ import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
+import PauseIcon from '@mui/icons-material/Pause';
 import PianoIcon from '@mui/icons-material/Piano';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SettingsIcon from '@mui/icons-material/Settings';
+import StopIcon from '@mui/icons-material/Stop';
 import TuneIcon from '@mui/icons-material/Tune';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
-import { SavedScore, PianoSettings } from '../types/piano';
+import { SavedScore, PianoSettings, PlaybackStatus } from '../types/piano';
 import { MidiDevice } from '../hooks/useMidi';
 import { GM_INSTRUMENTS } from '../data/gmInstruments';
 import { SoundFontOption } from '../data/soundFonts';
@@ -39,6 +42,11 @@ interface ControlPanelProps {
   selectedMidiDeviceId: string;
   onMidiDeviceChange: (id: string) => void;
   activeNotes?: Set<number>;
+  playbackStatus: PlaybackStatus;
+  canPlayback: boolean;
+  playbackError?: string | null;
+  onTogglePlayback: () => void | Promise<void>;
+  onStopPlayback: () => void;
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -61,7 +69,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   availableMidiDevices,
   selectedMidiDeviceId,
   onMidiDeviceChange,
-  activeNotes = new Set()
+  activeNotes = new Set(),
+  playbackStatus,
+  canPlayback,
+  playbackError = null,
+  onTogglePlayback,
+  onStopPlayback
 }) => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
   
@@ -208,6 +221,51 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         </Box>
         
         <Stack direction="row" spacing={3} alignItems="center">
+          <Stack spacing={0.5} sx={{ width: 250 }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Button
+                size="small"
+                variant="contained"
+                color={playbackStatus === 'playing' ? 'primary' : 'info'}
+                onClick={() => void onTogglePlayback()}
+                startIcon={playbackStatus === 'playing' ? <PauseIcon /> : <PlayArrowIcon />}
+                disabled={!canPlayback}
+              >
+                {playbackStatus === 'playing' ? 'Pause' : 'Play'}
+              </Button>
+              <IconButton
+                size="small"
+                onClick={onStopPlayback}
+                disabled={playbackStatus === 'stopped'}
+                aria-label="Stop simple playback"
+              >
+                <StopIcon fontSize="small" />
+              </IconButton>
+              <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                Simple playback
+              </Typography>
+            </Stack>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="caption" color="text.secondary" sx={{ width: 32 }}>
+                BPM
+              </Typography>
+              <Slider
+                size="small"
+                value={localSettings.playbackBpm}
+                onChange={handleSliderChange('playbackBpm')}
+                onChangeCommitted={handleSliderCommit('playbackBpm')}
+                min={40}
+                max={200}
+                step={1}
+                valueLabelDisplay="auto"
+              />
+            </Stack>
+            {playbackError && (
+              <Typography variant="caption" color="error" sx={{ lineHeight: 1.2 }}>
+                {playbackError}
+              </Typography>
+            )}
+          </Stack>
           <Box sx={{ width: 120, display: 'flex', alignItems: 'center' }}>
             <VolumeUpIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 20 }} />
             <Slider 

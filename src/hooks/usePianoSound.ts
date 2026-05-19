@@ -105,6 +105,7 @@ export const usePianoSound = (
   const sfontIdRef = useRef<number | null>(null);
   const loadedSoundFontIdRef = useRef<string | null>(null);
   const activeNotesRef = useRef<Map<number, number>>(new Map());
+  const playbackNotesRef = useRef<Map<number, number[]>>(new Map());
   const isSamplesLoadedRef = useRef(false);
   const initAudioPromiseRef = useRef<Promise<void> | null>(null);
 
@@ -305,6 +306,46 @@ export const usePianoSound = (
     });
   }, [startAudio]);
 
+  const playPlaybackNoteOn = useCallback(async (midi: number, velocityRatio: number = 0.8) => {
+    await startAudio();
+    const synth = synthRef.current;
+    if (!synth) return;
+
+    const current = settingsRef.current;
+    const shiftedMidi = Math.max(0, Math.min(127, midi + current.transpose));
+    const velocity = Math.max(1, Math.min(127, Math.round(velocityRatio * current.velocitySensitivity * 127)));
+    const shiftedNotes = playbackNotesRef.current.get(midi) ?? [];
+    shiftedNotes.push(shiftedMidi);
+    playbackNotesRef.current.set(midi, shiftedNotes);
+    synth.midiNoteOn(CHANNEL, shiftedMidi, velocity);
+  }, [startAudio]);
+
+  const playPlaybackNoteOff = useCallback((midi: number) => {
+    const synth = synthRef.current;
+    if (!synth) return;
+
+    const shiftedNotes = playbackNotesRef.current.get(midi);
+    const shiftedMidi = shiftedNotes?.shift();
+    if (shiftedNotes && shiftedNotes.length === 0) {
+      playbackNotesRef.current.delete(midi);
+    }
+
+    synth.midiNoteOff(CHANNEL, shiftedMidi ?? Math.max(0, Math.min(127, midi + settingsRef.current.transpose)));
+  }, []);
+
+  const stopPlaybackNotes = useCallback(() => {
+    const synth = synthRef.current;
+    if (!synth) {
+      playbackNotesRef.current.clear();
+      return;
+    }
+
+    playbackNotesRef.current.forEach((shiftedNotes) => {
+      shiftedNotes.forEach((shiftedMidi) => synth.midiNoteOff(CHANNEL, shiftedMidi));
+    });
+    playbackNotesRef.current.clear();
+  }, []);
+
   useEffect(() => {
     applyCurrentSettings();
   }, [applyCurrentSettings, volume, reverb, sustainEnabled, velocitySensitivity, gmProgram, reverbEnabled, chorusEnabled]);
@@ -341,9 +382,20 @@ export const usePianoSound = (
       audioContextRef.current = null;
       sfontIdRef.current = null;
       loadedSoundFontIdRef.current = null;
+      playbackNotesRef.current.clear();
       setAudioEngine('not-started');
     };
   }, []);
 
-  return { isAudioStarted, isSamplesLoaded, audioEngine, startAudio, playNotes, handleMidiEvent };
+  return {
+    isAudioStarted,
+    isSamplesLoaded,
+    audioEngine,
+    startAudio,
+    playNotes,
+    playPlaybackNoteOn,
+    playPlaybackNoteOff,
+    stopPlaybackNotes,
+    handleMidiEvent
+  };
 };
