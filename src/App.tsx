@@ -1,4 +1,4 @@
-import { useState, useCallback, memo, useEffect, useRef } from 'react'
+import { useState, useCallback, memo, useEffect, useRef, useMemo } from 'react'
 import { Box, Typography, CssBaseline, ThemeProvider, createTheme, Paper, Backdrop, CircularProgress, Stack } from '@mui/material'
 import ScoreDisplay from './components/ScoreDisplay'
 import PianoKeyboard from './components/PianoKeyboard'
@@ -26,7 +26,70 @@ const theme = createTheme({
 const MemoizedScoreDisplay = memo(ScoreDisplay);
 const EMPTY_NOTES = new Set<number>();
 const getPlaybackEventBaseId = (event: PlaybackNoteEvent) => event.id.replace(/-(on|off)$/, '');
-const getPlaybackEventStaffKey = (event: PlaybackNoteEvent) => `${event.systemId}:${event.measureNumber}:${event.staffId}`;
+const getPlaybackEventNoteKey = (event: PlaybackNoteEvent) => event.noteIdentity;
+
+type PlaybackMode = 'full' | 'range';
+type PlaybackErrorKind = 'timeline' | 'range' | 'audio';
+
+interface PlaybackSchedulerState {
+  startTick: number;
+  startTime: number;
+  nextEventIndex: number;
+  loopStartTick: number;
+  loopStartEventIndex: number;
+  rangeEndTick: number | null;
+  allowedEventIds: Set<string> | null;
+  timelineGeneration: number | null;
+}
+
+interface PlaybackSession {
+  id: number;
+  status: PlaybackStatus;
+  mode: PlaybackMode;
+  range: ScoreRangeSelection | null;
+  tick: number;
+  currentColumnKey: string | null;
+  activeEvents: Map<string, PlaybackNoteEvent>;
+  scheduler: PlaybackSchedulerState;
+}
+
+const createPlaybackSchedulerState = (
+  startTick: number = 0,
+  startTime: number = 0,
+  nextEventIndex: number = 0,
+  rangeEndTick: number | null = null,
+  allowedEventIds: Set<string> | null = null,
+  timelineGeneration: number | null = null,
+  loopStartTick: number = startTick,
+  loopStartEventIndex: number = nextEventIndex
+): PlaybackSchedulerState => ({
+  startTick,
+  startTime,
+  nextEventIndex,
+  loopStartTick,
+  loopStartEventIndex,
+  rangeEndTick,
+  allowedEventIds,
+  timelineGeneration,
+});
+
+const createPlaybackSession = (
+  id: number,
+  status: PlaybackStatus = 'stopped',
+  mode: PlaybackMode = 'full',
+  range: ScoreRangeSelection | null = null,
+  tick: number = 0,
+  scheduler: PlaybackSchedulerState = createPlaybackSchedulerState(tick)
+): PlaybackSession => ({
+  id,
+  status,
+  mode,
+  range,
+  tick,
+  currentColumnKey: null,
+  activeEvents: new Map(),
+  scheduler,
+});
 
 function App() {
   const { settings, updateSetting, resetSettings, showAllLines, showGuideLines } = usePianoSettings();
@@ -53,24 +116,54 @@ function App() {
   const [selected, setSelected] = useState<SelectionResult | null>(null);
   const [playbackTimeline, setPlaybackTimeline] = useState<PlaybackTimeline | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus>('stopped');
-  const [playbackTick, setPlaybackTick] = useState(0);
-  const [playbackColumnKey, setPlaybackColumnKey] = useState<string | null>(null);
-  const [playbackNotes, setPlaybackNotes] = useState<Set<number>>(new Set());
-  const [playbackStaffKeys, setPlaybackStaffKeys] = useState<Set<string>>(new Set());
-  const [playbackRangeSelection, setPlaybackRangeSelection] = useState<ScoreRangeSelection | null>(null);
+  const [playbackErrorKind, setPlaybackErrorKind] = useState<PlaybackErrorKind | null>(null);
+  const [playbackSession, setPlaybackSession] = useState<PlaybackSession>(() => createPlaybackSession(0));
   const playbackTimerRef = useRef<number | null>(null);
-  const playbackStatusRef = useRef<PlaybackStatus>('stopped');
-  const playbackTickRef = useRef(0);
-  const playbackStartTickRef = useRef(0);
-  const playbackStartTimeRef = useRef(0);
-  const playbackNextEventIndexRef = useRef(0);
-  const playbackRangeEndTickRef = useRef<number | null>(null);
-  const playbackAllowedEventIdsRef = useRef<Set<string> | null>(null);
+  const playbackSessionRef = useRef<PlaybackSession>(playbackSession);
+  const nextPlaybackSessionIdRef = useRef(1);
+  const playbackStartTokenRef = useRef(0);
+  const expiredPlaybackNoteIdsRef = useRef<Set<string>>(new Set());
+  const latestPlaybackTimelineGenerationRef = useRef(0);
   const playbackTimelineRef = useRef<PlaybackTimeline | null>(null);
   const playbackBpmRef = useRef(settings.playbackBpm);
-  const activePlaybackNotesRef = useRef<Set<number>>(new Set());
-  const activePlaybackStaffCountsRef = useRef<Map<string, number>>(new Map());
+  const playbackLoopRef = useRef(settings.playbackLoop);
+  const scoreBpmSourceKeyRef = useRef<string | null>(null);
+
+  const updatePlaybackSession = useCallback((updater: PlaybackSession | ((session: PlaybackSession) => PlaybackSession)) => {
+    const current = playbackSessionRef.current;
+    const next = typeof updater === 'function'
+      ? (updater as (session: PlaybackSession) => PlaybackSession)(current)
+      : updater;
+    playbackSessionRef.current = next;
+    setPlaybackSession(next);
+  }, []);
+
+  const setPlaybackIssue = useCallback((kind: PlaybackErrorKind, message: string) => {
+    setPlaybackErrorKind(kind);
+    setPlaybackError(message);
+  }, []);
+
+  const clearPlaybackIssue = useCallback(() => {
+    setPlaybackErrorKind(null);
+    setPlaybackError(null);
+  }, []);
+
+  const playbackStatus = playbackSession.status;
+  const playbackTick = playbackSession.tick;
+  const playbackColumnKey = playbackSession.currentColumnKey;
+  const playbackRangeSelection = playbackSession.range;
+  const activePlaybackEvents = useMemo(
+    () => Array.from(playbackSession.activeEvents.values()),
+    [playbackSession.activeEvents]
+  );
+  const playbackNotes = useMemo(
+    () => new Set(activePlaybackEvents.map((event) => event.soundingMidi)),
+    [activePlaybackEvents]
+  );
+  const playbackActiveNoteKeys = useMemo(
+    () => new Set(activePlaybackEvents.map(getPlaybackEventNoteKey)),
+    [activePlaybackEvents]
+  );
 
   // Rename dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -103,168 +196,261 @@ function App() {
   }, []);
 
   const getCurrentPlaybackTick = useCallback(() => {
-    if (playbackStatusRef.current !== 'playing') return playbackTickRef.current;
-    const elapsedMs = performance.now() - playbackStartTimeRef.current;
+    const session = playbackSessionRef.current;
+    if (session.status !== 'playing') return session.tick;
+    const elapsedMs = performance.now() - session.scheduler.startTime;
     const ticksPerMs = (playbackBpmRef.current * (playbackTimelineRef.current?.ppq ?? 480)) / 60000;
-    return playbackStartTickRef.current + elapsedMs * ticksPerMs;
-  }, []);
-
-  const setPlaybackTickState = useCallback((tick: number) => {
-    playbackTickRef.current = tick;
-    setPlaybackTick(tick);
+    return session.scheduler.startTick + elapsedMs * ticksPerMs;
   }, []);
 
   const clearActivePlaybackNotes = useCallback(() => {
-    activePlaybackNotesRef.current.forEach((note) => {
-      playPlaybackNoteOff(note);
+    playbackSessionRef.current.activeEvents.forEach((event) => {
+      playPlaybackNoteOff(event.soundingMidi);
     });
-    activePlaybackNotesRef.current.clear();
-    activePlaybackStaffCountsRef.current.clear();
     stopPlaybackNotes();
-    setPlaybackNotes(new Set());
-    setPlaybackStaffKeys(new Set());
   }, [playPlaybackNoteOff, stopPlaybackNotes]);
 
   const stopPlayback = useCallback((resetPosition: boolean = true) => {
+    playbackStartTokenRef.current += 1;
+    expiredPlaybackNoteIdsRef.current.clear();
     clearPlaybackTimer();
     clearActivePlaybackNotes();
-    playbackStatusRef.current = 'stopped';
-    setPlaybackStatus('stopped');
     setSelected(null);
-    setPlaybackRangeSelection(null);
-    if (resetPosition) {
-      setPlaybackTickState(0);
-      playbackNextEventIndexRef.current = 0;
-      playbackRangeEndTickRef.current = null;
-      playbackAllowedEventIdsRef.current = null;
-    }
-    setPlaybackColumnKey(null);
-  }, [clearActivePlaybackNotes, clearPlaybackTimer, setPlaybackTickState]);
+    updatePlaybackSession(createPlaybackSession(
+      nextPlaybackSessionIdRef.current++,
+      'stopped',
+      'full',
+      null,
+      resetPosition ? 0 : playbackSessionRef.current.tick
+    ));
+  }, [clearActivePlaybackNotes, clearPlaybackTimer, updatePlaybackSession]);
 
   const pausePlayback = useCallback(() => {
     const currentTick = getCurrentPlaybackTick();
+    playbackStartTokenRef.current += 1;
+    expiredPlaybackNoteIdsRef.current.clear();
     clearPlaybackTimer();
     clearActivePlaybackNotes();
-    playbackStatusRef.current = 'paused';
-    setPlaybackStatus('paused');
     setSelected(null);
-    setPlaybackRangeSelection(null);
-    setPlaybackTickState(currentTick);
-  }, [clearActivePlaybackNotes, clearPlaybackTimer, getCurrentPlaybackTick, setPlaybackTickState]);
+    updatePlaybackSession((session) => ({
+      ...session,
+      status: 'paused',
+      tick: currentTick,
+      currentColumnKey: null,
+      activeEvents: new Map(),
+      scheduler: {
+        ...session.scheduler,
+        startTick: currentTick,
+        startTime: 0,
+      },
+    }));
+  }, [clearActivePlaybackNotes, clearPlaybackTimer, getCurrentPlaybackTick, updatePlaybackSession]);
 
   const finishPlayback = useCallback(() => {
     stopPlayback(true);
   }, [stopPlayback]);
 
   const processPlaybackEvent = useCallback((event: PlaybackNoteEvent) => {
+    const eventBaseId = getPlaybackEventBaseId(event);
     if (event.type === 'note-off') {
-      const staffKey = getPlaybackEventStaffKey(event);
-      const nextCount = (activePlaybackStaffCountsRef.current.get(staffKey) ?? 0) - 1;
-      if (nextCount > 0) activePlaybackStaffCountsRef.current.set(staffKey, nextCount);
-      else activePlaybackStaffCountsRef.current.delete(staffKey);
-      playPlaybackNoteOff(event.displayMidi);
-      activePlaybackNotesRef.current.delete(event.displayMidi);
-      setPlaybackNotes(new Set(activePlaybackNotesRef.current));
-      setPlaybackStaffKeys(new Set(activePlaybackStaffCountsRef.current.keys()));
-      if (activePlaybackNotesRef.current.size === 0) setPlaybackColumnKey(null);
+      expiredPlaybackNoteIdsRef.current.add(eventBaseId);
+      playPlaybackNoteOff(event.soundingMidi);
+      updatePlaybackSession((session) => {
+        const activeEvents = new Map(session.activeEvents);
+        activeEvents.delete(eventBaseId);
+        return {
+          ...session,
+          activeEvents,
+          currentColumnKey: activeEvents.size > 0 ? session.currentColumnKey : null,
+        };
+      });
       return;
     }
 
-    const staffKey = getPlaybackEventStaffKey(event);
-    activePlaybackStaffCountsRef.current.set(staffKey, (activePlaybackStaffCountsRef.current.get(staffKey) ?? 0) + 1);
-    void playPlaybackNoteOn(event.displayMidi);
-    activePlaybackNotesRef.current.add(event.displayMidi);
-    setPlaybackNotes(new Set(activePlaybackNotesRef.current));
-    setPlaybackStaffKeys(new Set(activePlaybackStaffCountsRef.current.keys()));
-    setPlaybackColumnKey(event.columnKey);
-  }, [playPlaybackNoteOff, playPlaybackNoteOn]);
+    const startToken = playbackStartTokenRef.current;
+    expiredPlaybackNoteIdsRef.current.delete(eventBaseId);
+    void playPlaybackNoteOn(event.soundingMidi, 0.8, () =>
+      playbackStartTokenRef.current === startToken &&
+      playbackSessionRef.current.status === 'playing' &&
+      !expiredPlaybackNoteIdsRef.current.has(eventBaseId)
+    ).then((accepted) => {
+      if (
+        !accepted ||
+        playbackStartTokenRef.current !== startToken ||
+        playbackSessionRef.current.status !== 'playing' ||
+        expiredPlaybackNoteIdsRef.current.has(eventBaseId)
+      ) {
+        return;
+      }
 
-  const runPlaybackStep = useCallback(() => {
+      updatePlaybackSession((session) => {
+        const activeEvents = new Map(session.activeEvents);
+        activeEvents.set(eventBaseId, event);
+        return {
+          ...session,
+          activeEvents,
+          currentColumnKey: event.columnKey,
+        };
+      });
+    });
+  }, [playPlaybackNoteOff, playPlaybackNoteOn, updatePlaybackSession]);
+
+  const restartPlaybackLoop = useCallback((session: PlaybackSession) => {
+    clearActivePlaybackNotes();
+    updatePlaybackSession((latestSession) => {
+      if (latestSession.id !== session.id || latestSession.status !== 'playing') {
+        return latestSession;
+      }
+      const { loopStartTick, loopStartEventIndex } = latestSession.scheduler;
+      return {
+        ...latestSession,
+        tick: loopStartTick,
+        currentColumnKey: null,
+        activeEvents: new Map(),
+        scheduler: {
+          ...latestSession.scheduler,
+          startTick: loopStartTick,
+          startTime: performance.now(),
+          nextEventIndex: loopStartEventIndex,
+        },
+      };
+    });
+  }, [clearActivePlaybackNotes, updatePlaybackSession]);
+
+  const runPlaybackStep = useCallback((expectedSessionId?: number, expectedStartToken?: number) => {
+    const session = playbackSessionRef.current;
+    if (session.status !== 'playing') return;
+    if (expectedSessionId !== undefined && session.id !== expectedSessionId) return;
+    if (expectedStartToken !== undefined && playbackStartTokenRef.current !== expectedStartToken) return;
+
     const timeline = playbackTimelineRef.current;
     if (!timeline) {
       stopPlayback(true);
       return;
     }
+    if (
+      session.scheduler.timelineGeneration !== null &&
+      timeline.generation !== session.scheduler.timelineGeneration
+    ) {
+      stopPlayback(true);
+      return;
+    }
 
     const currentTick = getCurrentPlaybackTick();
-    setPlaybackTickState(currentTick);
-
-    const rangeEndTick = playbackRangeEndTickRef.current;
+    let nextEventIndex = session.scheduler.nextEventIndex;
+    const rangeEndTick = session.scheduler.rangeEndTick;
+    const allowedEventIds = session.scheduler.allowedEventIds;
 
     while (
-      playbackNextEventIndexRef.current < timeline.events.length &&
-      timeline.events[playbackNextEventIndexRef.current].tick <= currentTick &&
-      (rangeEndTick === null || timeline.events[playbackNextEventIndexRef.current].tick <= rangeEndTick)
+      nextEventIndex < timeline.events.length &&
+      timeline.events[nextEventIndex].tick <= currentTick &&
+      (rangeEndTick === null || timeline.events[nextEventIndex].tick <= rangeEndTick)
     ) {
-      const nextEvent = timeline.events[playbackNextEventIndexRef.current];
-      const allowedEventIds = playbackAllowedEventIdsRef.current;
+      const nextEvent = timeline.events[nextEventIndex];
       if (allowedEventIds === null || allowedEventIds.has(getPlaybackEventBaseId(nextEvent))) {
         processPlaybackEvent(nextEvent);
       }
-      playbackNextEventIndexRef.current += 1;
+      nextEventIndex += 1;
     }
 
     const reachedRangeEnd = rangeEndTick !== null && currentTick >= rangeEndTick;
-    const reachedScoreEnd = playbackNextEventIndexRef.current >= timeline.events.length && currentTick >= timeline.durationTicks;
+    const reachedScoreEnd = nextEventIndex >= timeline.events.length && currentTick >= timeline.durationTicks;
 
     if (reachedRangeEnd || reachedScoreEnd) {
+      const loopEndTick = rangeEndTick ?? timeline.durationTicks;
+      if (playbackLoopRef.current && loopEndTick > session.scheduler.loopStartTick) {
+        restartPlaybackLoop(session);
+        return;
+      }
       finishPlayback();
+      return;
     }
-  }, [finishPlayback, getCurrentPlaybackTick, processPlaybackEvent, setPlaybackTickState, stopPlayback]);
+
+    updatePlaybackSession((latestSession) => ({
+      ...latestSession,
+      tick: currentTick,
+      scheduler: {
+        ...latestSession.scheduler,
+        nextEventIndex,
+      },
+    }));
+  }, [finishPlayback, getCurrentPlaybackTick, processPlaybackEvent, restartPlaybackLoop, stopPlayback, updatePlaybackSession]);
 
   const startPlayback = useCallback(async () => {
     const timeline = playbackTimelineRef.current;
     if (!timeline || timeline.events.length === 0) {
-      setPlaybackError('No playable notes for simple playback.');
-      setPlaybackRangeSelection(null);
+      setPlaybackIssue('timeline', 'No playable notes for simple playback.');
+      updatePlaybackSession((session) => ({ ...session, range: null, mode: 'full' }));
       return;
     }
 
-    await startAudio();
-    const wasPaused = playbackStatusRef.current === 'paused';
-    playbackStatusRef.current = 'playing';
-    setPlaybackStatus('playing');
-    playbackStartTickRef.current = wasPaused ? playbackTickRef.current : 0;
-    playbackStartTimeRef.current = performance.now();
-    if (!wasPaused) {
-      playbackRangeEndTickRef.current = null;
-      playbackAllowedEventIdsRef.current = null;
-      playbackNextEventIndexRef.current = 0;
-      setPlaybackTickState(0);
-      setSelected(null);
-      setPlaybackRangeSelection(null);
-      setPlaybackColumnKey(null);
-      setPlaybackNotes(new Set());
-      setPlaybackStaffKeys(new Set());
-      activePlaybackNotesRef.current.clear();
-      activePlaybackStaffCountsRef.current.clear();
+    const startToken = ++playbackStartTokenRef.current;
+    try {
+      await startAudio();
+    } catch (error) {
+      console.error('Failed to start playback audio:', error);
+      if (startToken === playbackStartTokenRef.current) {
+        stopPlayback(true);
+        setPlaybackIssue('audio', 'Audio initialization failed. Check SoundFont and browser audio settings.');
+      }
+      return;
     }
+    if (startToken !== playbackStartTokenRef.current) return;
+
+    const currentSession = playbackSessionRef.current;
+    const wasPaused = currentSession.status === 'paused' &&
+      currentSession.scheduler.timelineGeneration === timeline.generation;
+    const nextSessionId = wasPaused ? currentSession.id : nextPlaybackSessionIdRef.current++;
+    const nextMode = wasPaused ? currentSession.mode : 'full';
+    const nextRange = wasPaused ? currentSession.range : null;
+    const startTick = wasPaused ? currentSession.tick : 0;
+    const scheduler = wasPaused
+      ? {
+          ...currentSession.scheduler,
+          startTick,
+          startTime: performance.now(),
+        }
+      : createPlaybackSchedulerState(0, performance.now(), 0, null, null, timeline.generation ?? null);
+    if (!wasPaused) {
+      setSelected(null);
+    }
+    expiredPlaybackNoteIdsRef.current.clear();
+    updatePlaybackSession(createPlaybackSession(
+      nextSessionId,
+      'playing',
+      nextMode,
+      nextRange,
+      startTick,
+      scheduler
+    ));
+    clearPlaybackIssue();
 
     clearPlaybackTimer();
-    playbackTimerRef.current = window.setInterval(runPlaybackStep, 25);
-    runPlaybackStep();
-  }, [clearPlaybackTimer, runPlaybackStep, setPlaybackTickState, startAudio]);
+    playbackTimerRef.current = window.setInterval(() => runPlaybackStep(nextSessionId, startToken), 25);
+    runPlaybackStep(nextSessionId, startToken);
+  }, [clearPlaybackIssue, clearPlaybackTimer, runPlaybackStep, setPlaybackIssue, startAudio, stopPlayback, updatePlaybackSession]);
 
   const startRangePlayback = useCallback(async (range: ScoreRangeSelection) => {
     const timeline = playbackTimelineRef.current;
     if (!timeline || timeline.events.length === 0) {
-      setPlaybackError('No playable notes for simple playback.');
-      setPlaybackRangeSelection(null);
+      setPlaybackIssue('timeline', 'No playable notes for simple playback.');
+      stopPlayback(true);
       return;
     }
 
     const selectedColumnKeys = new Set(range.columnKeys);
-    const selectedStaffKeys = new Set(range.selectedStaffKeys);
-    const usesStaffFilter = selectedStaffKeys.size > 0;
+    const selectedStaffIds = range.staffScope.type === 'staffs'
+      ? new Set(range.staffScope.staffIds)
+      : null;
     const noteOnEvents = timeline.events.filter((event) =>
       event.type === 'note-on' &&
       selectedColumnKeys.has(event.columnKey) &&
-      (!usesStaffFilter || selectedStaffKeys.has(getPlaybackEventStaffKey(event)))
+      (!selectedStaffIds || selectedStaffIds.has(event.staffId))
     );
 
     if (noteOnEvents.length === 0) {
-      setPlaybackError('No playable notes in the selected range.');
-      setPlaybackRangeSelection(null);
+      setPlaybackIssue('range', 'No playable notes in the selected range.');
+      stopPlayback(true);
       return;
     }
 
@@ -274,56 +460,88 @@ function App() {
     const endTick = Math.max(...selectedEvents.map((event) => event.tick), startTick);
     const startEventIndex = timeline.events.findIndex((event) => event.tick >= startTick);
 
-    await startAudio();
+    const startToken = ++playbackStartTokenRef.current;
+    try {
+      await startAudio();
+    } catch (error) {
+      console.error('Failed to start range playback audio:', error);
+      if (startToken === playbackStartTokenRef.current) {
+        stopPlayback(true);
+        setPlaybackIssue('audio', 'Audio initialization failed. Check SoundFont and browser audio settings.');
+      }
+      return;
+    }
+    if (startToken !== playbackStartTokenRef.current) return;
+
     clearPlaybackTimer();
     clearActivePlaybackNotes();
-    playbackStatusRef.current = 'playing';
-    setPlaybackStatus('playing');
-    playbackStartTickRef.current = startTick;
-    playbackStartTimeRef.current = performance.now();
-    playbackNextEventIndexRef.current = startEventIndex === -1 ? timeline.events.length : startEventIndex;
-    playbackRangeEndTickRef.current = endTick;
-    playbackAllowedEventIdsRef.current = selectedNoteIds;
-    setPlaybackTickState(startTick);
+    expiredPlaybackNoteIdsRef.current.clear();
     setSelected(null);
-    setPlaybackRangeSelection(range);
-    setPlaybackColumnKey(null);
-    setPlaybackNotes(new Set());
-    setPlaybackStaffKeys(new Set());
-    activePlaybackNotesRef.current.clear();
-    activePlaybackStaffCountsRef.current.clear();
-    setPlaybackError(null);
+    updatePlaybackSession(createPlaybackSession(
+      nextPlaybackSessionIdRef.current++,
+      'playing',
+      'range',
+      range,
+      startTick,
+      createPlaybackSchedulerState(
+        startTick,
+        performance.now(),
+        startEventIndex === -1 ? timeline.events.length : startEventIndex,
+        endTick,
+        selectedNoteIds,
+        timeline.generation ?? null
+      )
+    ));
+    clearPlaybackIssue();
 
-    playbackTimerRef.current = window.setInterval(runPlaybackStep, 25);
-    runPlaybackStep();
-  }, [clearActivePlaybackNotes, clearPlaybackTimer, runPlaybackStep, setPlaybackTickState, startAudio]);
+    const nextSessionId = playbackSessionRef.current.id;
+    playbackTimerRef.current = window.setInterval(() => runPlaybackStep(nextSessionId, startToken), 25);
+    runPlaybackStep(nextSessionId, startToken);
+  }, [clearActivePlaybackNotes, clearPlaybackIssue, clearPlaybackTimer, runPlaybackStep, setPlaybackIssue, startAudio, stopPlayback, updatePlaybackSession]);
 
   const togglePlayback = useCallback(async () => {
-    if (playbackStatusRef.current === 'playing') {
+    if (playbackSessionRef.current.status === 'playing') {
       pausePlayback();
       return;
     }
     await startPlayback();
   }, [pausePlayback, startPlayback]);
 
-  const handlePlaybackTimelineReady = useCallback((timeline: PlaybackTimeline | null, error?: string) => {
-    stopPlayback(true);
-    playbackTimelineRef.current = timeline;
-    setPlaybackTimeline(timeline);
+  const handlePlaybackTimelineReady = useCallback((timeline: PlaybackTimeline | null, error?: string, generation?: number) => {
+    const nextGeneration = typeof generation === 'number'
+      ? generation
+      : latestPlaybackTimelineGenerationRef.current + 1;
+    if (nextGeneration < latestPlaybackTimelineGenerationRef.current) return;
+    latestPlaybackTimelineGenerationRef.current = nextGeneration;
+
+    const nextTimeline = timeline ? { ...timeline, generation: nextGeneration } : null;
+    if (
+      playbackSessionRef.current.status === 'playing' &&
+      playbackSessionRef.current.scheduler.timelineGeneration !== nextGeneration
+    ) {
+      stopPlayback(true);
+    }
+    playbackTimelineRef.current = nextTimeline;
+    setPlaybackTimeline(nextTimeline);
     if (error) {
-      setPlaybackError(error);
+      setPlaybackIssue('timeline', error);
       return;
     }
-    if (!timeline || timeline.events.length === 0) {
-      setPlaybackError('No playable notes for simple playback.');
+    if (!nextTimeline || nextTimeline.events.length === 0) {
+      setPlaybackIssue('timeline', 'No playable notes for simple playback.');
       return;
     }
-    if (typeof timeline.scoreBpm === 'number' && timeline.scoreBpm !== settings.playbackBpm) {
-      updateSetting('playbackBpm', timeline.scoreBpm);
-      playbackBpmRef.current = timeline.scoreBpm;
+    if (
+      typeof nextTimeline.scoreBpm === 'number' &&
+      scoreData &&
+      scoreBpmSourceKeyRef.current !== scoreData
+    ) {
+      updateSetting('playbackBpm', nextTimeline.scoreBpm);
+      playbackBpmRef.current = nextTimeline.scoreBpm;
+      scoreBpmSourceKeyRef.current = scoreData;
     }
-    setPlaybackError(null);
-  }, [settings.playbackBpm, stopPlayback, updateSetting]);
+    clearPlaybackIssue();
+  }, [clearPlaybackIssue, scoreData, setPlaybackIssue, stopPlayback, updateSetting]);
 
   useEffect(() => {
     void refreshUserSoundFonts();
@@ -339,14 +557,45 @@ function App() {
   }, [settings.selectedSoundFontId, soundFontOptions, isSoundFontOptionsReady, updateSetting]);
 
   useEffect(() => {
+    scoreBpmSourceKeyRef.current = null;
+  }, [scoreData]);
+
+  useEffect(() => {
     const currentTick = getCurrentPlaybackTick();
     playbackBpmRef.current = settings.playbackBpm;
-    if (playbackStatusRef.current === 'playing') {
-      playbackStartTickRef.current = currentTick;
-      playbackStartTimeRef.current = performance.now();
-      setPlaybackTickState(currentTick);
+    if (playbackSessionRef.current.status === 'playing') {
+      updatePlaybackSession((session) => ({
+        ...session,
+        tick: currentTick,
+        scheduler: {
+          ...session.scheduler,
+          startTick: currentTick,
+          startTime: performance.now(),
+        },
+      }));
     }
-  }, [getCurrentPlaybackTick, settings.playbackBpm, setPlaybackTickState]);
+  }, [getCurrentPlaybackTick, settings.playbackBpm, updatePlaybackSession]);
+
+  useEffect(() => {
+    playbackLoopRef.current = settings.playbackLoop;
+  }, [settings.playbackLoop]);
+
+  useEffect(() => {
+    playbackTimelineRef.current = null;
+    setPlaybackTimeline(null);
+    clearPlaybackIssue();
+    if (playbackSessionRef.current.status !== 'stopped') {
+      stopPlayback(true);
+    }
+  }, [scoreData, settings.visualTranspose, clearPlaybackIssue, stopPlayback]);
+
+  useEffect(() => {
+    if (!isAudioStarted || isSamplesLoaded) return;
+    if (playbackSessionRef.current.status === 'playing') {
+      stopPlayback(true);
+      setPlaybackIssue('audio', 'Playback stopped while loading SoundFont.');
+    }
+  }, [isAudioStarted, isSamplesLoaded, setPlaybackIssue, stopPlayback]);
 
   useEffect(() => {
     return () => {
@@ -360,7 +609,9 @@ function App() {
     if (activeNotes.size > 0) {
       keepAwake();
       if (!isAudioStarted) {
-        void startAudio();
+        void startAudio().catch((error) => {
+          console.error('Failed to start audio after MIDI activity:', error);
+        });
       }
     }
   }, [activeNotes, keepAwake, isAudioStarted, startAudio]);
@@ -410,7 +661,9 @@ function App() {
       const saved = await saveUserSoundFont(file);
       await refreshUserSoundFonts();
       updateSetting('selectedSoundFontId', saved.id);
-      void startAudio();
+      void startAudio().catch((error) => {
+        console.error('Failed to start uploaded SoundFont:', error);
+      });
     } catch (error) {
       console.error('Failed to store user SoundFont:', error);
       alert('Failed to register SoundFont.');
@@ -455,11 +708,18 @@ function App() {
     void startRangePlayback(range);
   }, [startRangePlayback]);
 
-  const handleRangeSelectionStart = useCallback(() => {
-    if (playbackRangeSelection !== null && playbackStatusRef.current === 'playing') {
+  const handleRangePreviewStart = useCallback(() => {
+    if (playbackSessionRef.current.status === 'playing') {
       stopPlayback(true);
     }
-  }, [playbackRangeSelection, stopPlayback]);
+  }, [stopPlayback]);
+
+  const handleRangeProjectionInvalid = useCallback(() => {
+    if (playbackSessionRef.current.mode === 'range') {
+      stopPlayback(true);
+      setPlaybackIssue('range', 'Selected range is no longer visible.');
+    }
+  }, [setPlaybackIssue, stopPlayback]);
 
   const handleTitleReady = useCallback((title: string) => {
     updateScoreNameFromTitle(currentScoreId, title);
@@ -474,7 +734,8 @@ function App() {
     playbackTimeline &&
     playbackTimeline.events.length > 0 &&
     (!isAudioStarted || isSamplesLoaded) &&
-    !playbackError
+    playbackErrorKind !== 'audio' &&
+    playbackErrorKind !== 'timeline'
   );
 
   const keyboardHighlightNotes = new Set(selected?.midiNotes ?? EMPTY_NOTES);
@@ -488,6 +749,8 @@ function App() {
         ['click', 'keydown', 'touchstart', 'mousedown'].forEach(event => {
           window.removeEventListener(event, initAudioOnFirstInteraction);
         });
+      }).catch((error) => {
+        console.error('Failed to initialize audio on first interaction:', error);
       });
     };
     ['click', 'keydown', 'touchstart', 'mousedown'].forEach(event => {
@@ -566,16 +829,15 @@ function App() {
               showGuideLines={showGuideLines}
               showMidiMatchLines={settings.showMidiMatchLines}
               onSelectionChange={handleSelectionChange}
-              onRangeSelectionStart={handleRangeSelectionStart}
+              onRangePreviewStart={handleRangePreviewStart}
               onRangeSelectionComplete={handleRangeSelectionComplete}
               onTitleReady={handleTitleReady}
               onLoadingStateChange={handleLoadingStateChange}
               onPlaybackTimelineReady={handlePlaybackTimelineReady}
-              selection={selected}
+              onRangeProjectionInvalid={handleRangeProjectionInvalid}
               activeNotes={activeNotes}
               playbackColumnKey={playbackColumnKey}
-              playbackNotes={playbackNotes}
-              playbackStaffKeys={playbackStaffKeys}
+              playbackActiveNoteKeys={playbackActiveNoteKeys}
               playbackRangeSelection={playbackRangeSelection}
               highlightBlackKeys={settings.highlightBlackKeys}
               visualTranspose={settings.visualTranspose}

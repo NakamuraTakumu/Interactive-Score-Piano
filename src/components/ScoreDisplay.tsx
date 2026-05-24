@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { OpenSheetMusicDisplay, PointF2D, TransposeCalculator } from 'opensheetmusicdisplay';
-import { MeasureContext, NoteDetail, PlaybackTimeline, ScoreRangeSelection, SelectionResult } from '../types/piano';
-import { extractMeasureContexts, extractPlaybackTimeline, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint, getColumnKeyFromTimestamp } from '../utils/osmdCoordinates';
+import { MeasureContext, NoteDetail, PlaybackTimeline, ScoreRangeDraft, ScoreRangeSelection, SelectionResult, StaffScope } from '../types/piano';
+import { extractMeasureContexts, extractPlaybackTimeline, extractSourceNoteMidiMap, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint, getColumnKeyFromTimestamp, SourceNoteMidiMap } from '../utils/osmdCoordinates';
+import { resolveNoteVisualState } from '../utils/noteVisualState';
 
 interface ScoreDisplayProps {
   data: string;
@@ -9,16 +10,15 @@ interface ScoreDisplayProps {
   showGuideLines?: boolean;
   showMidiMatchLines?: boolean;
   onSelectionChange?: (selection: SelectionResult | null, forcePlay: boolean) => void;
-  onRangeSelectionStart?: () => void;
+  onRangePreviewStart?: () => void;
   onRangeSelectionComplete?: (range: ScoreRangeSelection) => void;
   onTitleReady?: (title: string) => void;
   onLoadingStateChange?: (isLoading: boolean) => void;
-  onPlaybackTimelineReady?: (timeline: PlaybackTimeline | null, error?: string) => void;
-  selection?: SelectionResult | null;
+  onPlaybackTimelineReady?: (timeline: PlaybackTimeline | null, error?: string, generation?: number) => void;
+  onRangeProjectionInvalid?: () => void;
   activeNotes?: Set<number>;
   playbackColumnKey?: string | null;
-  playbackNotes?: Set<number>;
-  playbackStaffKeys?: Set<string>;
+  playbackActiveNoteKeys?: Set<string>;
   playbackRangeSelection?: ScoreRangeSelection | null;
   highlightBlackKeys?: boolean;
   visualTranspose?: number;
@@ -59,6 +59,13 @@ interface RangeSpan {
   height: number;
 }
 
+interface OriginalSvgStyle {
+  fillAttribute: string | null;
+  strokeAttribute: string | null;
+  fillStyle: string;
+  strokeStyle: string;
+}
+
 const getColumnKeyTimestampValue = (columnKey: string): number | null => {
   const match = columnKey.match(/^(-?\d+):(-?\d+)\/(\d+)$/);
   if (!match) return null;
@@ -73,7 +80,7 @@ const getColumnKeyTimestampValue = (columnKey: string): number | null => {
   return whole + numerator / denominator;
 };
 
-const getStaffKey = (ctx: MeasureContext): string => `${ctx.systemId}:${ctx.measureNumber}:${ctx.staffId}`;
+const getPlaybackNoteKey = (detail: NoteDetail): string => detail.noteIdentity;
 
 const setsEqual = (left: Set<number>, right: Set<number>): boolean => {
   if (left.size !== right.size) return false;
@@ -118,20 +125,21 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   showGuideLines = true,
   showMidiMatchLines = false,
   onSelectionChange,
-  onRangeSelectionStart,
+  onRangePreviewStart,
   onRangeSelectionComplete,
   onTitleReady,
   onLoadingStateChange,
   onPlaybackTimelineReady,
+  onRangeProjectionInvalid,
   activeNotes = new Set(),
   playbackColumnKey = null,
-  playbackNotes = new Set(),
-  playbackStaffKeys = new Set(),
+  playbackActiveNoteKeys = new Set(),
   playbackRangeSelection = null,
   highlightBlackKeys = true,
   visualTranspose = 0
 }) => {
   const NOTE_SELECTION_THRESHOLD = 20;
+  const DRAG_RANGE_THRESHOLD = 4;
   const containerRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const lastLoadedDataRef = useRef<string | null>(null);
@@ -139,13 +147,17 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const [contexts, setContexts] = useState<MeasureContext[]>([]);
   const [ppu, setPpu] = useState<number>(10.0);
   const [hoveredMeasure, setHoveredMeasure] = useState<MeasureContext | null>(null);
-  const [dragRange, setDragRange] = useState<ScoreRangeSelection | null>(null);
+  const [dragRange, setDragRange] = useState<ScoreRangeDraft | null>(null);
   const dragStartColumnRef = useRef<ColumnHitResult | null>(null);
   const lastDragColumnRef = useRef<ColumnHitResult | null>(null);
   const dragStartPointRef = useRef<DragPoint | null>(null);
   const lastDragPointRef = useRef<DragPoint | null>(null);
   const dragMovedRef = useRef(false);
+  const rangePreviewStartedRef = useRef(false);
   const suppressNextClickRef = useRef(false);
+  const loadGenerationRef = useRef(0);
+  const sourceNoteMidiMapRef = useRef<SourceNoteMidiMap>(new Map());
+  const originalSvgStyleRef = useRef<WeakMap<SVGElement, OriginalSvgStyle>>(new WeakMap());
 
   const playbackSelection = useMemo<SelectionResult | null>(() => {
     if (!playbackColumnKey || contexts.length === 0) return null;
@@ -166,7 +178,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     relatedMeasures.forEach((ctx) => {
       ctx.noteDetails.forEach((detail) => {
         if (detail.columnKey !== playbackColumnKey) return;
-        midiNotes.add(detail.midi + visualTranspose);
+        midiNotes.add(detail.midi);
         xValues.push(detail.x);
       });
       ctx.columnDetails.forEach((column) => {
@@ -185,7 +197,6 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   }, [contexts, playbackColumnKey, visualTranspose]);
 
   const activeRange = dragRange ?? playbackRangeSelection;
-  const displaySelection = playbackSelection;
 
   const orderedColumns = useMemo<OrderedColumn[]>(() => {
     const groupedColumns = new Map<string, { xValues: number[]; y1: number; y2: number }>();
@@ -244,39 +255,28 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     return orderedColumns.slice(from, to + 1).map((column) => column.columnKey);
   };
 
-  const getSelectedStaffKeys = (
-    columnKeys: string[],
+  const getSelectedStaffScope = (
     startColumn: ColumnHitResult,
-    endColumn: ColumnHitResult,
-    startPoint: DragPoint,
-    endPoint: DragPoint
-  ): string[] => {
-    const selectedKeys = new Set(columnKeys);
-    const selectedStaffKeys = new Set<string>([
-      getStaffKey(startColumn.measure),
-      getStaffKey(endColumn.measure)
-    ]);
-    const y1 = Math.min(startPoint.y, endPoint.y);
-    const y2 = Math.max(startPoint.y, endPoint.y);
-    const verticalPadding = 2;
+    endColumn: ColumnHitResult
+  ): StaffScope => {
+    const staffIds = Array.from(new Set(contexts.map((ctx) => ctx.staffId))).sort((left, right) => left - right);
+    const startIndex = staffIds.indexOf(startColumn.measure.staffId);
+    const endIndex = staffIds.indexOf(endColumn.measure.staffId);
+    if (startIndex === -1 || endIndex === -1) {
+      return { type: 'staffs', staffIds: [startColumn.measure.staffId] };
+    }
 
-    contexts.forEach((ctx) => {
-      if (!ctx.columnDetails.some((column) => selectedKeys.has(column.columnKey))) return;
-      const staffTop = ctx.y;
-      const staffBottom = ctx.y + ctx.height;
-      if (staffBottom >= y1 - verticalPadding && staffTop <= y2 + verticalPadding) {
-        selectedStaffKeys.add(getStaffKey(ctx));
-      }
-    });
-
-    return Array.from(selectedStaffKeys);
+    const from = Math.min(startIndex, endIndex);
+    const to = Math.max(startIndex, endIndex);
+    return { type: 'staffs', staffIds: staffIds.slice(from, to + 1) };
   };
 
   const rangeSpans = useMemo<RangeSpan[]>(() => {
     if (!activeRange) return [];
     const selectedKeys = new Set(activeRange.columnKeys);
-    const selectedStaffKeys = new Set(activeRange.selectedStaffKeys);
-    const usesStaffFilter = selectedStaffKeys.size > 0;
+    const selectedStaffIds = activeRange.staffScope.type === 'staffs'
+      ? new Set(activeRange.staffScope.staffIds)
+      : null;
     const firstColumnKey = activeRange.columnKeys[0];
     const lastColumnKey = activeRange.columnKeys[activeRange.columnKeys.length - 1];
     const groups = new Map<string, {
@@ -291,11 +291,11 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     }>();
 
     contexts.forEach((ctx) => {
-      if (usesStaffFilter && !selectedStaffKeys.has(getStaffKey(ctx))) return;
+      if (selectedStaffIds && !selectedStaffIds.has(ctx.staffId)) return;
       const selectedColumns = ctx.columnDetails.filter((column) => selectedKeys.has(column.columnKey));
       if (selectedColumns.length === 0) return;
 
-      const key = getStaffKey(ctx);
+      const key = `${ctx.systemId}:${ctx.measureNumber}:${ctx.staffId}`;
       let group = groups.get(key);
       if (!group) {
         group = {
@@ -350,6 +350,11 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       };
     });
   }, [activeRange, contexts]);
+
+  useEffect(() => {
+    if (!playbackRangeSelection || dragRange || rangeSpans.length > 0) return;
+    onRangeProjectionInvalid?.();
+  }, [dragRange, onRangeProjectionInvalid, playbackRangeSelection, rangeSpans.length]);
 
   const getTimestampKeyAtClientPoint = (clientX: number, clientY: number): string | null => {
     const graphicSheet = osmdRef.current?.GraphicSheet as any;
@@ -431,7 +436,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     relatedMeasures.forEach(m => {
       m.noteDetails.forEach(note => {
         if (note.columnKey === hit.columnKey) {
-          targetMidiNotes.add(note.midi + visualTranspose);
+          targetMidiNotes.add(note.midi);
         }
       });
     });
@@ -466,7 +471,6 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     event.stopPropagation();
 
     const rect = containerRef.current.getBoundingClientRect();
-    onRangeSelectionStart?.();
     const columnAtStart = getColumnAtPoint(
       event.clientX - rect.left,
       event.clientY - rect.top,
@@ -479,17 +483,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     dragStartPointRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     lastDragPointRef.current = dragStartPointRef.current;
     dragMovedRef.current = false;
-
-    if (columnAtStart?.columnKey) {
-      setDragRange({
-        startColumnKey: columnAtStart.columnKey,
-        endColumnKey: columnAtStart.columnKey,
-        columnKeys: [columnAtStart.columnKey],
-        selectedStaffKeys: [getStaffKey(columnAtStart.measure)]
-      });
-    } else {
-      setDragRange(null);
-    }
+    rangePreviewStartedRef.current = false;
+    setDragRange(null);
   };
 
   const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -503,29 +498,38 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     if (measure !== hoveredMeasure) setHoveredMeasure(measure);
 
     if (event.buttons === 1 && dragStartColumnRef.current?.columnKey) {
+      const startColumn = dragStartColumnRef.current;
+      const startPoint = dragStartPointRef.current ?? { x, y };
+      const currentPoint = { x, y };
+      const hasMovedEnough =
+        Math.abs(currentPoint.x - startPoint.x) >= DRAG_RANGE_THRESHOLD ||
+        Math.abs(currentPoint.y - startPoint.y) >= DRAG_RANGE_THRESHOLD;
+      if (!hasMovedEnough) return;
+
       const currentColumn = getColumnAtPoint(x, y, event.clientX, event.clientY, false);
+      const endColumn = currentColumn ?? lastDragColumnRef.current ?? startColumn;
+      const startColumnKey = startColumn.columnKey;
+      const rangeColumnKeys = getRangeColumnKeys(startColumnKey, endColumn.columnKey);
+      const nextColumnKeys = rangeColumnKeys.length > 0 ? rangeColumnKeys : [startColumnKey];
+
       if (currentColumn?.columnKey) {
-        const startColumnKey = dragStartColumnRef.current.columnKey;
-        const rangeColumnKeys = getRangeColumnKeys(startColumnKey, currentColumn.columnKey);
-        const nextColumnKeys = rangeColumnKeys.length > 0 ? rangeColumnKeys : [startColumnKey];
-        const startPoint = dragStartPointRef.current ?? { x, y };
-        const currentPoint = { x, y };
         lastDragColumnRef.current = currentColumn;
-        lastDragPointRef.current = currentPoint;
-        dragMovedRef.current = dragMovedRef.current || currentColumn.columnKey !== startColumnKey;
-        setDragRange({
-          startColumnKey,
-          endColumnKey: currentColumn.columnKey,
-          columnKeys: nextColumnKeys,
-          selectedStaffKeys: getSelectedStaffKeys(
-            nextColumnKeys,
-            dragStartColumnRef.current,
-            currentColumn,
-            startPoint,
-            currentPoint
-          )
-        });
       }
+      lastDragPointRef.current = currentPoint;
+      dragMovedRef.current = true;
+      if (!rangePreviewStartedRef.current) {
+        rangePreviewStartedRef.current = true;
+        onRangePreviewStart?.();
+      }
+      setDragRange({
+        startColumnKey,
+        endColumnKey: endColumn.columnKey,
+        columnKeys: nextColumnKeys,
+        staffScope: getSelectedStaffScope(
+          startColumn,
+          endColumn
+        )
+      });
     }
   };
 
@@ -542,6 +546,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     lastDragColumnRef.current = null;
     dragStartPointRef.current = null;
     lastDragPointRef.current = null;
+    rangePreviewStartedRef.current = false;
     setDragRange(null);
 
     if (!startColumn?.columnKey || !endColumn?.columnKey || !startPoint || !endPoint) return;
@@ -559,7 +564,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       startColumnKey: startColumn.columnKey,
       endColumnKey: endColumn.columnKey,
       columnKeys: rangeColumnKeys,
-      selectedStaffKeys: getSelectedStaffKeys(rangeColumnKeys, startColumn, endColumn, startPoint, endPoint)
+      staffScope: getSelectedStaffScope(startColumn, endColumn)
     };
 
     suppressNextClickRef.current = true;
@@ -603,6 +608,9 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     // データも移調設定も変更がない場合はスキップ
     if (data === lastLoadedDataRef.current && visualTranspose === lastVisualTransposeRef.current) return;
 
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
+
     const update = async () => {
       try {
         if (onLoadingStateChange) onLoadingStateChange(true);
@@ -613,6 +621,9 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
         // Always reload data to ensure clean state for transposition
         await osmd.load(data);
+        if (loadGenerationRef.current !== generation) return;
+        const sourceNoteMidiMap = extractSourceNoteMidiMap(osmd);
+        sourceNoteMidiMapRef.current = sourceNoteMidiMap;
         
         // レンダリングオプションの再適用
         osmd.setOptions({
@@ -631,6 +642,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         }
 
         osmd.render();
+        if (loadGenerationRef.current !== generation) return;
         lastLoadedDataRef.current = data;
         lastVisualTransposeRef.current = visualTranspose;
 
@@ -642,10 +654,10 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
         if (onPlaybackTimelineReady) {
           try {
-            onPlaybackTimelineReady(extractPlaybackTimeline(osmd, ctxs, visualTranspose));
+            onPlaybackTimelineReady(extractPlaybackTimeline(osmd, ctxs, sourceNoteMidiMap), undefined, generation);
           } catch (error) {
             console.error('Playback timeline extraction failed:', error);
-            onPlaybackTimelineReady(null, 'Unable to prepare simple playback for this score.');
+            onPlaybackTimelineReady(null, 'Unable to prepare simple playback for this score.', generation);
           }
         }
 
@@ -656,7 +668,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       } catch (err) { 
         console.error("OSMD Update Error:", err); 
       } finally {
-        if (onLoadingStateChange) onLoadingStateChange(false);
+        if (loadGenerationRef.current === generation && onLoadingStateChange) onLoadingStateChange(false);
       }
     };
     update();
@@ -673,107 +685,79 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       setPpu(pixelPerUnit);
       setContexts(ctxs);
       setDragRange(null);
+      if (onPlaybackTimelineReady) {
+        const generation = loadGenerationRef.current + 1;
+        loadGenerationRef.current = generation;
+        try {
+          onPlaybackTimelineReady(extractPlaybackTimeline(osmd, ctxs, sourceNoteMidiMapRef.current), undefined, generation);
+        } catch (error) {
+          console.error('Playback timeline extraction failed after resize:', error);
+          onPlaybackTimelineReady(null, 'Unable to prepare simple playback for this score.', generation);
+        }
+      }
     };
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) { if (entry.contentRect.width > 0) handleResize(); }
     });
     resizeObserver.observe(containerRef.current);
     return () => resizeObserver.disconnect();
-  }, []);
+  }, [onPlaybackTimelineReady, visualTranspose]);
 
   // Update note colors
   useEffect(() => {
     if (contexts.length === 0) return;
-    
-    contexts.forEach(ctx => {
-      // GraphicalVoiceEntry (和音) ごとにグループ化
-      const gveMap = new Map<any, any[]>();
-      ctx.noteDetails.forEach((detail: any) => {
-        const gve = detail.graphicalNote.parentVoiceEntry;
-        if (!gveMap.has(gve)) gveMap.set(gve, []);
-        gveMap.get(gve)!.push(detail);
+
+    const rememberOriginalStyle = (element: SVGElement) => {
+      if (originalSvgStyleRef.current.has(element)) return;
+      originalSvgStyleRef.current.set(element, {
+        fillAttribute: element.getAttribute('fill'),
+        strokeAttribute: element.getAttribute('stroke'),
+        fillStyle: element.style.fill,
+        strokeStyle: element.style.stroke,
       });
+    };
 
-      gveMap.forEach((details, gve) => {
-        const isSelected = displaySelection !== null &&
-                           displaySelection.measure.measureNumber === ctx.measureNumber &&
-                           displaySelection.measure.systemId === ctx.systemId &&
-                           displaySelection.columnKey !== null &&
-                           details.some(d => d.columnKey === displaySelection.columnKey);
-        // Calculate default color for the group (chord)
-        const baseColor = '#000000';
+    const restoreElement = (element: SVGElement) => {
+      rememberOriginalStyle(element);
+      const original = originalSvgStyleRef.current.get(element);
+      if (!original) return;
 
-        // 1. VexFlow の StaveNote オブジェクトを取得
-        const vf = details[0]?.graphicalNote?.vfnote;
-        if (!vf) return;
-        const realVfNote = Array.isArray(vf) ? vf[0] : vf;
+      if (original.fillAttribute === null) element.removeAttribute('fill');
+      else element.setAttribute('fill', original.fillAttribute);
+      if (original.strokeAttribute === null) element.removeAttribute('stroke');
+      else element.setAttribute('stroke', original.strokeAttribute);
+      element.style.fill = original.fillStyle;
+      element.style.stroke = original.strokeStyle;
+    };
 
-        // 2. SVG グループ要素を取得
-        const gveSvgGroup = realVfNote.attrs?.el || realVfNote.el;
+    const applyColor = (element: SVGElement, color: string) => {
+      rememberOriginalStyle(element);
+      element.setAttribute('fill', color);
+      element.setAttribute('stroke', color);
+      element.style.fill = color;
+      element.style.stroke = color;
+    };
 
-        if (gveSvgGroup instanceof SVGElement) {
-          const setCol = (el: SVGElement, color: string) => {
-            el.setAttribute('fill', color);
-            el.setAttribute('stroke', color);
-            el.style.fill = color;
-            el.style.stroke = color;
-          };
+    contexts.forEach((ctx) => {
+      ctx.noteDetails.forEach((detail) => {
+        const head = getNoteHeadElement(detail);
+        if (!head) return;
 
-          const isBlackKey = (midi: number) => [1, 3, 6, 8, 10].includes(midi % 12);
-
-          // Determine if all notes are being played (compensate for visualTranspose)
-          const allActive = details.length > 0 && details.every((d: any) => activeNotes.has(d.midi + visualTranspose));
-
-          if (allActive) {
-            // A. 全ての音が弾かれている場合：和音全体を赤くする
-            const color = '#ff0000';
-            gveSvgGroup.querySelectorAll('path, ellipse').forEach(el => setCol(el as SVGElement, color));
-          } else {
-            // B. 個別の音または未演奏の状態
-            // まず全体（符幹など）をベース色でリセット
-            gveSvgGroup.querySelectorAll('path, ellipse').forEach(el => setCol(el as SVGElement, baseColor));
-
-            // 符頭要素（NoteHead）を個別に着色
-            const noteGroup = gveSvgGroup.querySelector('.vf-note');
-            if (noteGroup) {
-              const heads = Array.from(noteGroup.querySelectorAll('path, ellipse')).filter(el => 
-                !el.classList.contains('vf-stem')
-              );
-
-              details.forEach((detail: any) => {
-                let noteColor = baseColor;
-                
-                // Real MIDI note being played/selected
-                const realMidi = detail.midi + visualTranspose;
-
-                // --- Highlight Black Keys Logic ---
-                if (highlightBlackKeys && !isSelected && isBlackKey(realMidi)) {
-                  // keySig >= 0 (Sharp/Natural) -> Orange (Right side of white key)
-                  // keySig < 0 (Flat) -> Light Blue (Left side of white key)
-                  noteColor = ctx.keySig >= 0 ? '#fb8c00' : '#03a9f4';
-                }
-
-                if (activeNotes.has(realMidi)) {
-                  noteColor = '#ff0000';
-                } else if (
-                  isSelected &&
-                  detail.columnKey === playbackColumnKey &&
-                  (playbackStaffKeys.size === 0 || playbackStaffKeys.has(getStaffKey(ctx))) &&
-                  playbackNotes.has(realMidi)
-                ) {
-                  noteColor = '#4caf50';
-                }
-
-                if (noteColor !== baseColor && heads.length > detail.index) {
-                  setCol(heads[detail.index] as SVGElement, noteColor);
-                }
-              });
-            }
-          }
-        }
+        restoreElement(head);
+        const midi = detail.midi;
+        head.setAttribute('data-midi', String(midi));
+        head.setAttribute('data-note-identity', getPlaybackNoteKey(detail));
+        const visualState = resolveNoteVisualState({
+          midi,
+          keySig: ctx.keySig,
+          highlightBlackKeys,
+          isMidiActive: activeNotes.has(midi),
+          isPlaybackActive: playbackActiveNoteKeys.has(getPlaybackNoteKey(detail)),
+        });
+        if (visualState.color) applyColor(head, visualState.color);
       });
     });
-  }, [activeNotes, contexts, displaySelection, highlightBlackKeys, playbackColumnKey, playbackNotes, playbackStaffKeys, visualTranspose]);
+  }, [activeNotes, contexts, highlightBlackKeys, playbackActiveNoteKeys, visualTranspose]);
 
   const matchCandidates = useMemo<ColumnMatchCandidate[]>(() => {
     if (!showMidiMatchLines) return [];
@@ -816,7 +800,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
           groups.set(key, group);
         }
 
-        group.midiNotes.add(detail.midi + visualTranspose);
+        group.midiNotes.add(detail.midi);
 
         const headCenterX = getRelativeNoteHeadCenterX(detail, containerRect);
         if (headCenterX !== null) {
@@ -856,6 +840,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       lines.push(
         <rect
           key={span.key}
+          data-testid="score-range-overlay"
           x={span.x}
           y={span.y}
           width={span.width}
@@ -889,19 +874,16 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         if (ctx.noteDetails.length === 0) return;
 
         let minLimit = -1, maxLimit = 1000;
-        // Compensate limits for visualTranspose
         if (ctx.minMidi !== null && ctx.maxMidi !== null) { 
-          minLimit = (ctx.minMidi + visualTranspose) - 2; 
-          maxLimit = (ctx.maxMidi + visualTranspose) + 2; 
+          minLimit = ctx.minMidi - 2;
+          maxLimit = ctx.maxMidi + 2;
         }
         else { if (ctx.clefType === 'G') minLimit = 55; else if (ctx.clefType === 'F') maxLimit = 65; }
         
         Array.from(activeNotes).forEach(note => {
           if (showAllLines || (note >= minLimit && note <= maxLimit)) {
-            // Map the played MIDI note back to its visual position on the score
-            const visualNote = note - visualTranspose;
-            const y = calculateYForMidi(visualNote, ctx, ppu);
-            const diatonic = isDiatonic(visualNote, ctx.keySig, ctx.keyMode);
+            const y = calculateYForMidi(note, ctx, ppu);
+            const diatonic = isDiatonic(note, ctx.keySig, ctx.keyMode);
             lines.push(<line key={`l-${ctx.systemId}-${ctx.measureNumber}-${ctx.staffId}-${note}`} x1={ctx.x + 2} y1={y} x2={ctx.x + ctx.width - 2} y2={y} stroke={diatonic ? "red" : "#2196f3"} strokeWidth="3" strokeDasharray={diatonic ? "none" : "4 2"} opacity="0.8" />);
           }
         });

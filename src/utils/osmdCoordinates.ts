@@ -49,6 +49,32 @@ const shouldSkipPlaybackNote = (sourceNote: any): boolean => {
   return false;
 };
 
+const getSourceNoteMidi = (sourceNote: any): number | null => {
+  return sourceNote?.Pitch ? sourceNote.Pitch.getHalfTone() + 12 : null;
+};
+
+export type SourceNoteMidiMap = Map<any, number>;
+
+export const extractSourceNoteMidiMap = (osmd: OpenSheetMusicDisplay): SourceNoteMidiMap => {
+  const result: SourceNoteMidiMap = new Map();
+  const sourceMeasures = osmd.Sheet?.SourceMeasures ?? (osmd.Sheet as any)?.sourceMeasures ?? [];
+
+  sourceMeasures.forEach((measure: any) => {
+    measure.VerticalSourceStaffEntryContainers?.forEach((container: any) => {
+      container.StaffEntries?.forEach((staffEntry: any) => {
+        staffEntry?.VoiceEntries?.forEach((voiceEntry: any) => {
+          voiceEntry?.Notes?.forEach((sourceNote: any) => {
+            const midi = getSourceNoteMidi(sourceNote);
+            if (midi !== null) result.set(sourceNote, midi);
+          });
+        });
+      });
+    });
+  });
+
+  return result;
+};
+
 const normalizeBpm = (value: unknown): number | null => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
   return Math.max(20, Math.min(300, Math.round(value)));
@@ -191,17 +217,27 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
             const columnIndex = columnIndexMap.get(gse.parentVerticalContainer) ?? gseIndex;
             const columnKey = getColumnKeyFromTimestamp(absTs, source ? source.MeasureNumber : mIdx + 1, columnIndex);
 
-            gse.graphicalVoiceEntries.forEach(gve => {
+            gse.graphicalVoiceEntries.forEach((gve, voiceEntryIndex) => {
               gve.notes.forEach((gn, index) => {
                 if (gn.sourceNote && gn.sourceNote.Pitch) {
-                  const soundingMidi = gn.sourceNote.Pitch.getHalfTone() + 12;
-                  if (minMidi === null || soundingMidi < minMidi) minMidi = soundingMidi;
-                  if (maxMidi === null || soundingMidi > maxMidi) maxMidi = soundingMidi;
+                  const renderedMidi = gn.sourceNote.Pitch.getHalfTone() + 12;
+                  if (minMidi === null || renderedMidi < minMidi) minMidi = renderedMidi;
+                  if (maxMidi === null || renderedMidi > maxMidi) maxMidi = renderedMidi;
+                  const voiceId = gn.sourceNote.ParentVoiceEntry?.ParentVoice?.VoiceId ?? voiceEntryIndex;
+                  const noteIdentity = [
+                    'note',
+                    source ? source.MeasureNumber : mIdx + 1,
+                    staffId,
+                    columnIndex,
+                    voiceId,
+                    index
+                  ].join(':');
 
                   noteDetails.push({
-                    midi: soundingMidi,
+                    midi: renderedMidi,
                     x: entryX,
                     columnKey,
+                    noteIdentity,
                     graphicalNote: gn,
                     index: index
                   });
@@ -252,7 +288,7 @@ export const extractMeasureContexts = (osmd: OpenSheetMusicDisplay, pixelPerUnit
 export const extractPlaybackTimeline = (
   osmd: OpenSheetMusicDisplay,
   contexts: MeasureContext[],
-  visualTranspose: number = 0
+  sourceNoteMidiMap: SourceNoteMidiMap = extractSourceNoteMidiMap(osmd)
 ): PlaybackTimeline => {
   const events: PlaybackNoteEvent[] = [];
   let durationTicks = 0;
@@ -293,7 +329,7 @@ export const extractPlaybackTimeline = (
             if (noteDurationTicks === null) return;
 
             const mapped = sourceNoteMap.get(sourceNote);
-            const sourceMidi = mapped?.detail.midi ?? (sourceNote.Pitch ? sourceNote.Pitch.getHalfTone() + 12 : null);
+            const sourceMidi = sourceNoteMidiMap.get(sourceNote) ?? getSourceNoteMidi(sourceNote);
             if (sourceMidi === null) return;
 
             const columnKey = mapped?.detail.columnKey ?? fallbackColumnKey;
@@ -301,8 +337,17 @@ export const extractPlaybackTimeline = (
             const systemId = mapped?.ctx.systemId ?? 0;
             const staffId = mapped?.ctx.staffId ?? sourceNote.ParentStaff?.idInMusicSheet ?? staffIndex;
             const endTicks = startTicks + noteDurationTicks;
-            const displayMidi = sourceMidi + visualTranspose;
+            const renderedMidi = mapped?.detail.midi ?? sourceMidi;
+            const soundingMidi = renderedMidi;
             const voiceId = voiceEntry.ParentVoice?.VoiceId ?? voiceIndex;
+            const noteIdentity = mapped?.detail.noteIdentity ?? [
+              'note',
+              measure.MeasureNumber ?? measureIndex + 1,
+              staffId,
+              containerIndex,
+              voiceId,
+              noteIndex
+            ].join(':');
             const idBase = `${measureIndex}-${containerIndex}-${staffIndex}-${voiceId}-${noteIndex}-${columnKey}-${sourceMidi}`;
 
             events.push({
@@ -313,8 +358,10 @@ export const extractPlaybackTimeline = (
               measureNumber,
               systemId,
               staffId,
+              noteIdentity,
               sourceMidi,
-              displayMidi,
+              soundingMidi,
+              renderedMidi,
               durationTicks: noteDurationTicks,
             });
 
@@ -326,8 +373,10 @@ export const extractPlaybackTimeline = (
               measureNumber,
               systemId,
               staffId,
+              noteIdentity,
               sourceMidi,
-              displayMidi,
+              soundingMidi,
+              renderedMidi,
             });
 
             durationTicks = Math.max(durationTicks, endTicks);
@@ -394,9 +443,9 @@ export const getMeasureAtPoint = (x: number, y: number, contexts: MeasureContext
 
 export const calculateYForMidi = (midi: number, ctx: MeasureContext, ppu: number): number => {
   const space = ppu / 2;
-  const displayMidi = midi + ctx.octaveShift;
-  const pc = ((displayMidi % 12) + 12) % 12;
-  const octave = Math.floor(displayMidi / 12);
+  const visualMidi = midi + ctx.octaveShift;
+  const pc = ((visualMidi % 12) + 12) % 12;
+  const octave = Math.floor(visualMidi / 12);
   
   // Choose mapping based on Key Signature
   // Flats (keySig < 0): Map black keys to the upper note (e.g. Eb -> E position)

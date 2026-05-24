@@ -25,12 +25,14 @@ export interface PianoSettings {
   velocitySensitivity: number;
   highlightBlackKeys: boolean;
   playbackBpm: number;
+  playbackLoop: boolean;
 }
 
 export interface NoteDetail {
-  midi: number;
+  midi: number; // current rendered score pitch used for hit-test and notehead state
   x: number; // 音符列の代表 x 座標（ピクセル）
   columnKey: string; // OSMD absolute timestamp ベースの列識別子
+  noteIdentity: string; // source note / rendered notehead を対応付ける識別子
   graphicalNote: any; // GraphicalNote
   index: number;
 }
@@ -66,12 +68,18 @@ export interface SelectionResult {
   columnKey: string | null;
 }
 
-export interface ScoreRangeSelection {
+export type StaffScope =
+  | { type: 'all' }
+  | { type: 'staffs'; staffIds: number[] };
+
+export interface ScoreRangeDraft {
   startColumnKey: string;
   endColumnKey: string;
   columnKeys: string[];
-  selectedStaffKeys: string[];
+  staffScope: StaffScope;
 }
+
+export interface ScoreRangeSelection extends ScoreRangeDraft {}
 
 export type PlaybackStatus = 'stopped' | 'playing' | 'paused';
 
@@ -83,8 +91,10 @@ export interface PlaybackNoteEvent {
   measureNumber: number;
   systemId: number;
   staffId: number;
+  noteIdentity: string;
   sourceMidi: number;
-  displayMidi: number;
+  soundingMidi: number;
+  renderedMidi: number;
   durationTicks?: number;
 }
 
@@ -92,5 +102,6 @@ export interface PlaybackTimeline {
   ppq: number;
   durationTicks: number;
   events: PlaybackNoteEvent[];
+  generation?: number;
   scoreBpm?: number;
 }

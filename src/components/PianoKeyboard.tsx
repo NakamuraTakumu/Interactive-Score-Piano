@@ -75,6 +75,8 @@ const PianoKeyboard: React.FC<PianoKeyboardProps> = ({
         {whiteKeys.map((note, i) => (
           <rect
             key={note}
+            data-testid="piano-key"
+            data-midi={note}
             x={i * whiteKeyWidth}
             y={0}
             width={whiteKeyWidth - 1}
@@ -95,6 +97,8 @@ const PianoKeyboard: React.FC<PianoKeyboardProps> = ({
           return (
             <rect
               key={note}
+              data-testid="piano-key"
+              data-midi={note}
               x={x}
               y={0}
               width={blackKeyWidth}

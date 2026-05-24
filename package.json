@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:playback": "npx --yes -p playwright -c 'NODE_PATH=$(dirname $(dirname $(which playwright))) node tool/playback_regression.cjs'",
     "preview": "vite preview",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist"

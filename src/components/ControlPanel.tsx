@@ -12,6 +12,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import PauseIcon from '@mui/icons-material/Pause';
 import PianoIcon from '@mui/icons-material/Piano';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import RepeatIcon from '@mui/icons-material/Repeat';
 import SettingsIcon from '@mui/icons-material/Settings';
 import StopIcon from '@mui/icons-material/Stop';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -241,6 +242,18 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               >
                 <StopIcon fontSize="small" />
               </IconButton>
+              <Tooltip title="Loop playback">
+                <IconButton
+                  size="small"
+                  onClick={() => updateSetting('playbackLoop', !settings.playbackLoop)}
+                  color={settings.playbackLoop ? 'primary' : 'default'}
+                  aria-label="Loop simple playback"
+                  aria-pressed={settings.playbackLoop}
+                  data-testid="playback-loop-toggle"
+                >
+                  <RepeatIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
               <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
                 Simple playback
               </Typography>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { PianoSettings, SoundType } from '../types/piano';
 import { DEFAULT_SOUND_FONT_ID } from '../data/soundFonts';
 
@@ -18,7 +18,8 @@ const DEFAULT_SETTINGS: PianoSettings = {
   sustainEnabled: false,
   velocitySensitivity: 1,
   highlightBlackKeys: true,
-  playbackBpm: 100
+  playbackBpm: 100,
+  playbackLoop: false
 };
 
 export const usePianoSettings = () => {
@@ -34,13 +35,13 @@ export const usePianoSettings = () => {
     return DEFAULT_SETTINGS;
   });
 
-  const updateSetting = <K extends keyof PianoSettings>(key: K, value: PianoSettings[K]) => {
-    setSettings(prev => ({ ...prev, [key]: value }));
-  };
+  const updateSetting = useCallback(<K extends keyof PianoSettings>(key: K, value: PianoSettings[K]) => {
+    setSettings(prev => Object.is(prev[key], value) ? prev : { ...prev, [key]: value });
+  }, []);
 
-  const resetSettings = () => {
+  const resetSettings = useCallback(() => {
     setSettings(DEFAULT_SETTINGS);
-  };
+  }, []);
 
   // Persist settings to localStorage
   useEffect(() => {

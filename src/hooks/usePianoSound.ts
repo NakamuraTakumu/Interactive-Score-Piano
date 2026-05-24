@@ -14,6 +14,8 @@ interface FxToggleCapable {
   setChorusOn?: unknown;
 }
 
+type SynthInstance = JSSynth.Synthesizer | JSSynth.AudioWorkletNodeSynthesizer;
+
 const CHANNEL = 0;
 const BASE_URL = import.meta.env.BASE_URL || '/';
 const LIBFLUIDSYNTH_CANDIDATES = [
@@ -101,13 +103,15 @@ export const usePianoSound = (
   const settingsRef = useRef(settings);
 
   const audioContextRef = useRef<AudioContext | null>(null);
-  const synthRef = useRef<JSSynth.Synthesizer | JSSynth.AudioWorkletNodeSynthesizer | null>(null);
+  const synthRef = useRef<SynthInstance | null>(null);
   const sfontIdRef = useRef<number | null>(null);
   const loadedSoundFontIdRef = useRef<string | null>(null);
   const activeNotesRef = useRef<Map<number, number>>(new Map());
   const playbackNotesRef = useRef<Map<number, number[]>>(new Map());
   const isSamplesLoadedRef = useRef(false);
   const initAudioPromiseRef = useRef<Promise<void> | null>(null);
+  const soundFontLoadPromiseRef = useRef<Promise<void> | null>(null);
+  const soundFontLoadGenerationRef = useRef(0);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -119,10 +123,7 @@ export const usePianoSound = (
 
   const dbToGain = (db: number) => Math.max(0, Math.min(10, Math.pow(10, db / 20)));
 
-  const applyCurrentSettings = useCallback(() => {
-    const synth = synthRef.current;
-    if (!synth) return;
-
+  const applySettingsToSynth = useCallback((synth: SynthInstance, sfontId: number | null) => {
     const current = settingsRef.current;
     const fxSynth = synth as unknown as FxToggleCapable;
     synth.setGain(dbToGain(current.volume));
@@ -135,15 +136,44 @@ export const usePianoSound = (
     synth.midiControl(CHANNEL, 91, current.reverbEnabled ? Math.round(current.reverb * 127) : 0);
     synth.midiControl(CHANNEL, 93, 0);
     synth.midiControl(CHANNEL, 64, current.sustainEnabled ? 127 : 0);
-    if (sfontIdRef.current !== null) {
-      synth.midiProgramSelect(CHANNEL, sfontIdRef.current, 0, current.gmProgram);
+    if (sfontId !== null) {
+      synth.midiProgramSelect(CHANNEL, sfontId, 0, current.gmProgram);
     }
   }, []);
 
-  const loadSelectedSoundFont = useCallback(async (soundFontId: string) => {
+  const applyCurrentSettings = useCallback(() => {
     const synth = synthRef.current;
     if (!synth) return;
+    applySettingsToSynth(synth, sfontIdRef.current);
+  }, [applySettingsToSynth]);
 
+  const resetPublishedAudioEngine = useCallback(() => {
+    const synth = synthRef.current;
+    const ctx = audioContextRef.current;
+    const sfontId = sfontIdRef.current;
+
+    if (synth) {
+      synth.midiAllSoundsOff(CHANNEL);
+      if (sfontId !== null) {
+        synth.unloadSFontAsync(sfontId).catch(() => {});
+      }
+      synth.close();
+    }
+    ctx?.close().catch(() => {});
+
+    synthRef.current = null;
+    audioContextRef.current = null;
+    sfontIdRef.current = null;
+    loadedSoundFontIdRef.current = null;
+    activeNotesRef.current.clear();
+    playbackNotesRef.current.clear();
+    setIsAudioStarted(false);
+    isSamplesLoadedRef.current = false;
+    setIsSamplesLoaded(false);
+    setAudioEngine('not-started');
+  }, []);
+
+  const fetchSoundFontBuffer = useCallback(async (soundFontId: string): Promise<ArrayBuffer> => {
     const targetSoundFontId = soundFontId || DEFAULT_SOUND_FONT_ID;
     let soundFontBuffer: ArrayBuffer | null = null;
     const bundledPreset = findSoundFontPreset(targetSoundFontId);
@@ -171,22 +201,87 @@ export const usePianoSound = (
       }
     }
 
-    const previousSfontId = sfontIdRef.current;
-    const nextSfontId = await synth.loadSFont(soundFontBuffer);
+    return soundFontBuffer;
+  }, []);
 
-    sfontIdRef.current = nextSfontId;
-    loadedSoundFontIdRef.current = targetSoundFontId;
-    applyCurrentSettings();
+  const loadSoundFontIntoSynth = useCallback(async (synth: SynthInstance, soundFontId: string) => {
+    const targetSoundFontId = soundFontId || DEFAULT_SOUND_FONT_ID;
+    const soundFontBuffer = await fetchSoundFontBuffer(targetSoundFontId);
+    return synth.loadSFont(soundFontBuffer);
+  }, [fetchSoundFontBuffer]);
 
-    if (previousSfontId !== null && previousSfontId !== nextSfontId) {
-      synth.unloadSFontAsync(previousSfontId).catch(() => {});
+  const loadCurrentSoundFont = useCallback(async (soundFontId: string) => {
+    const synth = synthRef.current;
+    if (!synth) return;
+
+    const targetSoundFontId = soundFontId || DEFAULT_SOUND_FONT_ID;
+    if (loadedSoundFontIdRef.current === targetSoundFontId && isSamplesLoadedRef.current) return;
+
+    const generation = soundFontLoadGenerationRef.current + 1;
+    soundFontLoadGenerationRef.current = generation;
+    isSamplesLoadedRef.current = false;
+    setIsSamplesLoaded(false);
+
+    const loadPromise = (async () => {
+      const previousSfontId = sfontIdRef.current;
+      const nextSfontId = await loadSoundFontIntoSynth(synth, targetSoundFontId);
+      if (soundFontLoadGenerationRef.current !== generation || synthRef.current !== synth) {
+        synth.unloadSFontAsync(nextSfontId).catch(() => {});
+        return;
+      }
+
+      sfontIdRef.current = nextSfontId;
+      loadedSoundFontIdRef.current = targetSoundFontId;
+      applySettingsToSynth(synth, nextSfontId);
+
+      if (previousSfontId !== null && previousSfontId !== nextSfontId) {
+        synth.unloadSFontAsync(previousSfontId).catch(() => {});
+      }
+      isSamplesLoadedRef.current = true;
+      setIsSamplesLoaded(true);
+    })();
+
+    soundFontLoadPromiseRef.current = loadPromise;
+    try {
+      await loadPromise;
+    } catch (error) {
+      if (soundFontLoadGenerationRef.current === generation) {
+        isSamplesLoadedRef.current = false;
+        setIsSamplesLoaded(false);
+      }
+      throw error;
+    } finally {
+      if (soundFontLoadPromiseRef.current === loadPromise) {
+        soundFontLoadPromiseRef.current = null;
+      }
     }
-  }, [applyCurrentSettings]);
+  }, [applySettingsToSynth, loadSoundFontIntoSynth]);
+
+  const publishInitializedAudioEngine = useCallback((
+    ctx: AudioContext,
+    synth: SynthInstance,
+    sfontId: number,
+    soundFontId: string,
+    engine: 'worklet' | 'main-thread'
+  ) => {
+    audioContextRef.current = ctx;
+    synthRef.current = synth;
+    sfontIdRef.current = sfontId;
+    loadedSoundFontIdRef.current = soundFontId;
+    applySettingsToSynth(synth, sfontId);
+    setAudioEngine(engine);
+    setIsAudioStarted(true);
+    isSamplesLoadedRef.current = true;
+    setIsSamplesLoaded(true);
+  }, [applySettingsToSynth]);
 
   const initAudio = useCallback(async () => {
-    if (audioContextRef.current && synthRef.current) return;
     if (initAudioPromiseRef.current) {
       await initAudioPromiseRef.current;
+      return;
+    }
+    if (audioContextRef.current && synthRef.current) {
+      await loadCurrentSoundFont(settingsRef.current.selectedSoundFontId || DEFAULT_SOUND_FONT_ID);
       return;
     }
 
@@ -195,60 +290,85 @@ export const usePianoSound = (
         latencyHint: 'interactive'
       });
 
-      let synth: JSSynth.Synthesizer | JSSynth.AudioWorkletNodeSynthesizer;
+      let synth: SynthInstance | null = null;
+      let engine: 'worklet' | 'main-thread' = 'worklet';
+      let sfontId: number | null = null;
       try {
-        await addWorkletModuleWithFallback(ctx, LIBFLUIDSYNTH_CANDIDATES, 'libfluidsynth worklet module');
-        await addWorkletModuleWithFallback(ctx, JSSYNTH_WORKLET_CANDIDATES, 'js-synthesizer worklet module');
+        try {
+          await addWorkletModuleWithFallback(ctx, LIBFLUIDSYNTH_CANDIDATES, 'libfluidsynth worklet module');
+          await addWorkletModuleWithFallback(ctx, JSSYNTH_WORKLET_CANDIDATES, 'js-synthesizer worklet module');
 
-        synth = new JSSynth.AudioWorkletNodeSynthesizer();
-        synth.init(ctx.sampleRate);
-        setAudioEngine('worklet');
-        console.info('[audio] engine=worklet');
+          synth = new JSSynth.AudioWorkletNodeSynthesizer();
+          synth.init(ctx.sampleRate);
+          engine = 'worklet';
+          console.info('[audio] engine=worklet');
 
-        const audioNode = synth.createAudioNode(ctx);
-        audioNode.connect(ctx.destination);
-      } catch (workletError) {
-        console.warn('Worklet synth init failed. Falling back to main-thread Synthesizer.', workletError);
-        await ensureMainThreadFluidSynthLoaded();
-        await JSSynth.waitForReady();
+          const audioNode = synth.createAudioNode(ctx);
+          audioNode.connect(ctx.destination);
+        } catch (workletError) {
+          console.warn('Worklet synth init failed. Falling back to main-thread Synthesizer.', workletError);
+          await ensureMainThreadFluidSynthLoaded();
+          await JSSynth.waitForReady();
 
-        synth = new JSSynth.Synthesizer();
-        synth.init(ctx.sampleRate);
-        setAudioEngine('main-thread');
-        console.info('[audio] engine=main-thread');
-        const audioNode = synth.createAudioNode(ctx, 256);
-        audioNode.connect(ctx.destination);
+          synth = new JSSynth.Synthesizer();
+          synth.init(ctx.sampleRate);
+          engine = 'main-thread';
+          console.info('[audio] engine=main-thread');
+          const audioNode = synth.createAudioNode(ctx, 256);
+          audioNode.connect(ctx.destination);
+        }
+
+        isSamplesLoadedRef.current = false;
+        setIsSamplesLoaded(false);
+        const soundFontId = settingsRef.current.selectedSoundFontId || DEFAULT_SOUND_FONT_ID;
+        sfontId = await loadSoundFontIntoSynth(synth, soundFontId);
+        publishInitializedAudioEngine(ctx, synth, sfontId, soundFontId, engine);
+      } catch (error) {
+        if (synth) {
+          if (sfontId !== null) {
+            synth.unloadSFontAsync(sfontId).catch(() => {});
+          }
+          synth.close();
+        }
+        ctx.close().catch(() => {});
+        throw error;
       }
-
-      audioContextRef.current = ctx;
-      synthRef.current = synth;
-      setIsAudioStarted(true);
-      applyCurrentSettings();
-      setIsSamplesLoaded(false);
-      await loadSelectedSoundFont(settingsRef.current.selectedSoundFontId || DEFAULT_SOUND_FONT_ID);
-      setIsSamplesLoaded(true);
     })();
 
     try {
       await initAudioPromiseRef.current;
     } catch (error) {
       console.error('Failed to initialize audio or load SoundFont:', error);
-      setIsSamplesLoaded(false);
+      resetPublishedAudioEngine();
       throw error;
     } finally {
       initAudioPromiseRef.current = null;
     }
-  }, [applyCurrentSettings, loadSelectedSoundFont]);
+  }, [loadCurrentSoundFont, loadSoundFontIntoSynth, publishInitializedAudioEngine, resetPublishedAudioEngine]);
 
   const startAudio = useCallback(async () => {
+    if (initAudioPromiseRef.current) {
+      await initAudioPromiseRef.current;
+    }
+
     if (!audioContextRef.current || !synthRef.current) {
       await initAudio();
     }
 
+    if (soundFontLoadPromiseRef.current) {
+      await soundFontLoadPromiseRef.current;
+    }
+
+    await loadCurrentSoundFont(settingsRef.current.selectedSoundFontId || DEFAULT_SOUND_FONT_ID);
+
     if (audioContextRef.current?.state === 'suspended') {
       await audioContextRef.current.resume();
     }
-  }, [initAudio]);
+
+    if (!synthRef.current || !audioContextRef.current || !isSamplesLoadedRef.current) {
+      throw new Error('Audio engine is not ready.');
+    }
+  }, [initAudio, loadCurrentSoundFont]);
 
   const processMidiEvent = useCallback((type: MidiEventPayload['type'], payload: MidiEventPayload['payload']) => {
     const synth = synthRef.current;
@@ -287,13 +407,20 @@ export const usePianoSound = (
 
     // Do not replay old MIDI events after async init/resume.
     // Replaying stale key presses feels like lag.
-    void startAudio();
+    void startAudio().catch((error) => {
+      console.error('Failed to start audio for MIDI input:', error);
+    });
   }, [processMidiEvent, startAudio]);
 
   const playNotes = useCallback(async (midiNotes: number[]) => {
-    await startAudio();
+    try {
+      await startAudio();
+    } catch (error) {
+      console.error('Failed to start audio for preview notes:', error);
+      return;
+    }
     const synth = synthRef.current;
-    if (!synth) return;
+    if (!synth || !isSamplesLoadedRef.current) return;
 
     const current = settingsRef.current;
     midiNotes.forEach(note => {
@@ -306,10 +433,28 @@ export const usePianoSound = (
     });
   }, [startAudio]);
 
-  const playPlaybackNoteOn = useCallback(async (midi: number, velocityRatio: number = 0.8) => {
-    await startAudio();
+  const playPlaybackNoteOn = useCallback(async (
+    midi: number,
+    velocityRatio: number = 0.8,
+    shouldPlay?: () => boolean
+  ): Promise<boolean> => {
+    if (shouldPlay && !shouldPlay()) return false;
+
+    const ctx = audioContextRef.current;
+    const isReadyToPlay = Boolean(synthRef.current && ctx?.state === 'running' && isSamplesLoadedRef.current);
+    if (!isReadyToPlay) {
+      try {
+        await startAudio();
+      } catch (error) {
+        console.error('Failed to start playback note:', error);
+        return false;
+      }
+    }
+    if (shouldPlay && !shouldPlay()) return false;
+
     const synth = synthRef.current;
-    if (!synth) return;
+    const currentCtx = audioContextRef.current;
+    if (!synth || currentCtx?.state !== 'running' || !isSamplesLoadedRef.current) return false;
 
     const current = settingsRef.current;
     const shiftedMidi = Math.max(0, Math.min(127, midi + current.transpose));
@@ -318,6 +463,7 @@ export const usePianoSound = (
     shiftedNotes.push(shiftedMidi);
     playbackNotesRef.current.set(midi, shiftedNotes);
     synth.midiNoteOn(CHANNEL, shiftedMidi, velocity);
+    return true;
   }, [startAudio]);
 
   const playPlaybackNoteOff = useCallback((midi: number) => {
@@ -352,20 +498,18 @@ export const usePianoSound = (
 
   useEffect(() => {
     if (!synthRef.current) return;
-    if (loadedSoundFontIdRef.current === selectedSoundFontId) return;
+    if (loadedSoundFontIdRef.current === selectedSoundFontId && isSamplesLoadedRef.current) return;
 
-    setIsSamplesLoaded(false);
     void (async () => {
       try {
-        await startAudio();
-        await loadSelectedSoundFont(selectedSoundFontId);
-        setIsSamplesLoaded(true);
+        await loadCurrentSoundFont(selectedSoundFontId);
       } catch (error) {
         console.error('Failed to switch SoundFont:', error);
+        isSamplesLoadedRef.current = false;
         setIsSamplesLoaded(false);
       }
     })();
-  }, [selectedSoundFontId, startAudio, loadSelectedSoundFont]);
+  }, [selectedSoundFontId, loadCurrentSoundFont]);
 
   useEffect(() => {
     return () => {
@@ -383,6 +527,7 @@ export const usePianoSound = (
       sfontIdRef.current = null;
       loadedSoundFontIdRef.current = null;
       playbackNotesRef.current.clear();
+      isSamplesLoadedRef.current = false;
       setAudioEngine('not-started');
     };
   }, []);
