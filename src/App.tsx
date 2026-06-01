@@ -587,7 +587,7 @@ function App() {
     if (playbackSessionRef.current.status !== 'stopped') {
       stopPlayback(true);
     }
-  }, [scoreData, settings.visualTranspose, clearPlaybackIssue, stopPlayback]);
+  }, [scoreData, settings.scoreDrawingParameters, settings.visualTranspose, clearPlaybackIssue, stopPlayback]);
 
   useEffect(() => {
     if (!isAudioStarted || isSamplesLoaded) return;
@@ -841,6 +841,7 @@ function App() {
               playbackRangeSelection={playbackRangeSelection}
               highlightBlackKeys={settings.highlightBlackKeys}
               visualTranspose={settings.visualTranspose}
+              scoreDrawingParameters={settings.scoreDrawingParameters}
             />
           </Paper>
         </Box>

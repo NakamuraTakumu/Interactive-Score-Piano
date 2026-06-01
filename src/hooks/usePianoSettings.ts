@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { PianoSettings, SoundType } from '../types/piano';
+import { isScoreDrawingParameters, PianoSettings, SoundType } from '../types/piano';
 import { DEFAULT_SOUND_FONT_ID } from '../data/soundFonts';
 
 const DEFAULT_SETTINGS: PianoSettings = {
@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: PianoSettings = {
   sustainEnabled: false,
   velocitySensitivity: 1,
   highlightBlackKeys: true,
+  scoreDrawingParameters: 'compact',
   playbackBpm: 100,
   playbackLoop: false
 };
@@ -27,7 +28,13 @@ export const usePianoSettings = () => {
     const saved = localStorage.getItem('piano_app_settings');
     if (saved) {
       try {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        return {
+          ...parsed,
+          scoreDrawingParameters: isScoreDrawingParameters(parsed.scoreDrawingParameters)
+            ? parsed.scoreDrawingParameters
+            : DEFAULT_SETTINGS.scoreDrawingParameters,
+        };
       } catch (e) {
         return DEFAULT_SETTINGS;
       }

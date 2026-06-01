@@ -17,10 +17,16 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import StopIcon from '@mui/icons-material/Stop';
 import TuneIcon from '@mui/icons-material/Tune';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
-import { SavedScore, PianoSettings, PlaybackStatus } from '../types/piano';
+import { SCORE_DRAWING_PARAMETER_VALUES, SavedScore, PianoSettings, PlaybackStatus, ScoreDrawingParameters } from '../types/piano';
 import { MidiDevice } from '../hooks/useMidi';
 import { GM_INSTRUMENTS } from '../data/gmInstruments';
 import { SoundFontOption } from '../data/soundFonts';
+
+const SCORE_DRAWING_PARAMETER_LABELS: Record<ScoreDrawingParameters, string> = {
+  default: 'Default',
+  compact: 'Compact',
+  compacttight: 'Compact tight',
+};
 
 interface ControlPanelProps {
   scoreLibrary: SavedScore[];
@@ -417,6 +423,24 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             <Divider />
 
             {/* Display Toggles */}
+            <Box>
+              <FormControl fullWidth size="small">
+                <InputLabel id="score-drawing-parameters-label">Score Layout</InputLabel>
+                <Select
+                  labelId="score-drawing-parameters-label"
+                  value={settings.scoreDrawingParameters}
+                  label="Score Layout"
+                  onChange={(e) => updateSetting('scoreDrawingParameters', e.target.value as ScoreDrawingParameters)}
+                >
+                  {SCORE_DRAWING_PARAMETER_VALUES.map((value) => (
+                    <MenuItem key={value} value={value}>
+                      {SCORE_DRAWING_PARAMETER_LABELS[value]}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+
             <Stack direction="row" spacing={2} flexWrap="wrap">
               <FormControlLabel
                 control={<Switch size="small" checked={settings.showAllLines} onChange={(e) => updateSetting('showAllLines', e.target.checked)} />}

@@ -7,6 +7,15 @@ export interface SavedScore {
 
 export type ClefType = 'G' | 'F' | 'C';
 export type SoundType = 'piano' | 'synth';
+export const SCORE_DRAWING_PARAMETER_VALUES = [
+  'default',
+  'compact',
+  'compacttight',
+] as const;
+export type ScoreDrawingParameters = typeof SCORE_DRAWING_PARAMETER_VALUES[number];
+
+export const isScoreDrawingParameters = (value: unknown): value is ScoreDrawingParameters =>
+  typeof value === 'string' && SCORE_DRAWING_PARAMETER_VALUES.includes(value as ScoreDrawingParameters);
 
 export interface PianoSettings {
   showAllLines: boolean;
@@ -24,6 +33,7 @@ export interface PianoSettings {
   sustainEnabled: boolean;
   velocitySensitivity: number;
   highlightBlackKeys: boolean;
+  scoreDrawingParameters: ScoreDrawingParameters;
   playbackBpm: number;
   playbackLoop: boolean;
 }

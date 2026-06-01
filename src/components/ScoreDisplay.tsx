@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { OpenSheetMusicDisplay, PointF2D, TransposeCalculator } from 'opensheetmusicdisplay';
-import { MeasureContext, NoteDetail, PlaybackTimeline, ScoreRangeDraft, ScoreRangeSelection, SelectionResult, StaffScope } from '../types/piano';
+import { MeasureContext, NoteDetail, PlaybackTimeline, ScoreDrawingParameters, ScoreRangeDraft, ScoreRangeSelection, SelectionResult, StaffScope } from '../types/piano';
 import { extractMeasureContexts, extractPlaybackTimeline, extractSourceNoteMidiMap, calculateYForMidi, getPixelPerUnit, isDiatonic, getMeasureAtPoint, getColumnKeyFromTimestamp, SourceNoteMidiMap } from '../utils/osmdCoordinates';
 import { resolveNoteVisualState } from '../utils/noteVisualState';
 
@@ -22,6 +22,7 @@ interface ScoreDisplayProps {
   playbackRangeSelection?: ScoreRangeSelection | null;
   highlightBlackKeys?: boolean;
   visualTranspose?: number;
+  scoreDrawingParameters?: ScoreDrawingParameters;
 }
 
 interface ColumnMatchCandidate {
@@ -136,7 +137,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   playbackActiveNoteKeys = new Set(),
   playbackRangeSelection = null,
   highlightBlackKeys = true,
-  visualTranspose = 0
+  visualTranspose = 0,
+  scoreDrawingParameters = 'compact'
 }) => {
   const NOTE_SELECTION_THRESHOLD = 20;
   const DRAG_RANGE_THRESHOLD = 4;
@@ -144,6 +146,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const lastLoadedDataRef = useRef<string | null>(null);
   const lastVisualTransposeRef = useRef<number>(visualTranspose);
+  const lastScoreDrawingParametersRef = useRef<ScoreDrawingParameters>(scoreDrawingParameters);
   const [contexts, setContexts] = useState<MeasureContext[]>([]);
   const [ppu, setPpu] = useState<number>(10.0);
   const [hoveredMeasure, setHoveredMeasure] = useState<MeasureContext | null>(null);
@@ -591,11 +594,11 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       backend: 'svg',
       drawTitle: false,
       drawPartNames: false,
-      drawingParameters: 'compacttight',
+      drawingParameters: scoreDrawingParameters,
       // レンダリング高速化のための詳細設定
       drawLyrics: false,
       drawFingerings: false,
-      drawSlurs: false,
+      drawSlurs: true,
       drawMeasureNumbers: true,
     });
     osmdRef.current = osmd;
@@ -606,7 +609,13 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     if (!osmd || !data) return;
     
     // データも移調設定も変更がない場合はスキップ
-    if (data === lastLoadedDataRef.current && visualTranspose === lastVisualTransposeRef.current) return;
+    if (
+      data === lastLoadedDataRef.current &&
+      visualTranspose === lastVisualTransposeRef.current &&
+      scoreDrawingParameters === lastScoreDrawingParametersRef.current
+    ) {
+      return;
+    }
 
     const generation = loadGenerationRef.current + 1;
     loadGenerationRef.current = generation;
@@ -629,7 +638,8 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         osmd.setOptions({
           drawLyrics: false,
           drawFingerings: false,
-          drawSlurs: false,
+          drawSlurs: true,
+          drawingParameters: scoreDrawingParameters,
         });
 
         // Apply visual transpose
@@ -645,6 +655,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         if (loadGenerationRef.current !== generation) return;
         lastLoadedDataRef.current = data;
         lastVisualTransposeRef.current = visualTranspose;
+        lastScoreDrawingParametersRef.current = scoreDrawingParameters;
 
         const pixelPerUnit = getPixelPerUnit(osmd, containerRef.current!);
         const ctxs = extractMeasureContexts(osmd, pixelPerUnit);
@@ -672,7 +683,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       }
     };
     update();
-  }, [data, onTitleReady, onLoadingStateChange, onPlaybackTimelineReady, visualTranspose]);
+  }, [data, onTitleReady, onLoadingStateChange, onPlaybackTimelineReady, scoreDrawingParameters, visualTranspose]);
 
   useEffect(() => {
     if (!containerRef.current || !osmdRef.current) return;
