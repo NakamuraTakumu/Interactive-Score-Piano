@@ -370,6 +370,38 @@ const waitForScore = async (page) => {
   }, { timeout: 30000 });
 };
 
+const assertScoreLayoutIsGlobal = async (page) => {
+  await page.getByTestId('settings-button').click();
+  await page.getByTestId('score-layout-select').click();
+  await page.getByRole('option', { name: 'Compact tight' }).click();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('#settings-popover'));
+
+  await page.getByLabel('Score Library').click();
+  await page.getByRole('option', { name: 'Sample: Clef Change' }).click();
+  await waitForScore(page);
+
+  await page.getByTestId('settings-button').click();
+  const layoutTextAfterScoreChange = await page.getByTestId('score-layout-select').innerText();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('#settings-popover'));
+  if (!layoutTextAfterScoreChange.includes('Compact tight')) {
+    throw new Error(`Expected score layout setting to remain global after score change. label=${layoutTextAfterScoreChange}`);
+  }
+
+  await page.getByLabel('Score Library').click();
+  await page.getByRole('option', { name: 'Sample: Grand Staff' }).click();
+  await waitForScore(page);
+
+  await page.getByTestId('settings-button').click();
+  await page.getByTestId('score-layout-select').click();
+  await page.getByRole('option', { name: 'Compact', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('#settings-popover'));
+  await waitForScore(page);
+  await page.waitForTimeout(1000);
+};
+
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -397,6 +429,7 @@ const waitForScore = async (page) => {
   if (await page.getByText('BPM', { exact: true }).count() > 0) {
     throw new Error('Expected BPM control label to be removed.');
   }
+  await assertScoreLayoutIsGlobal(page);
 
   const points = await getScoreDragPoints(page);
   const { duringRange, afterRange } = await dragScoreRange(page, points);

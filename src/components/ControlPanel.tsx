@@ -188,7 +188,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
           </Box>
 
           <Tooltip title="Settings & MIDI">
-            <IconButton onClick={handleSettingsClick} color={open ? "primary" : "default"}>
+            <IconButton
+              onClick={handleSettingsClick}
+              color={open ? "primary" : "default"}
+              aria-label="Settings and MIDI"
+              data-testid="settings-button"
+            >
               <TuneIcon />
             </IconButton>
           </Tooltip>
@@ -438,12 +443,13 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             {/* Display Toggles */}
             <Box>
               <FormControl fullWidth size="small">
-                <InputLabel id="score-drawing-parameters-label">Score Layout</InputLabel>
+                <InputLabel id="score-drawing-parameters-label">Global Score Layout</InputLabel>
                 <Select
                   labelId="score-drawing-parameters-label"
                   value={settings.scoreDrawingParameters}
-                  label="Score Layout"
+                  label="Global Score Layout"
                   onChange={(e) => updateSetting('scoreDrawingParameters', e.target.value as ScoreDrawingParameters)}
+                  data-testid="score-layout-select"
                 >
                   {SCORE_DRAWING_PARAMETER_VALUES.map((value) => (
                     <MenuItem key={value} value={value}>

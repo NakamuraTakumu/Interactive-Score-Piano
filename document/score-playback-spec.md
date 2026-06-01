@@ -48,6 +48,7 @@ Responsibility: 表示中の楽譜を簡単に再生する v1 機能の範囲、
 - **Click preview**: 単一 click は従来どおり一つの note column の音だけ短く鳴らす。緑の score note 装飾は click 後に保持しない。
 - **Disabled state**: scoreData がない、audio 初期化中、SoundFont 未ロード中、timeline 抽出失敗時は Play を disabled にする。
 - **Score change**: score selection, upload, delete, visualTranspose change で再生を stop し、timeline を作り直す。
+- **Score layout**: score layout は楽譜ごとの属性ではなく、全楽譜に適用される global setting とする。
 - **Timeline generation**: score data, visualTranspose, resize による timeline 再抽出は generation を持ち、古い非同期結果は採用しない。
 - **End of score**: Loop OFF では最後の note-off を処理したら `stopped` に戻し、発音中 note と cursor を消し、次の Play は先頭から始める。Loop ON では発音中 note を止め、同じ session のまま先頭から再開する。
 - **User-facing label**: UI では `Simple playback` または同等の短い label を使い、完全な MusicXML 再生ではないことを示す。
