@@ -1,7 +1,7 @@
 # MXL Playback Coverage
 
 - Created: 2026-05-24 08:19 UTC
-- Updated: 2026-05-24 08:24 UTC
+- Updated: 2026-06-01 14:16 UTC
 - Model: gpt-5.5
 - Reasoning-Effort: high
 - Session: 019e4058-0985-7fc3-a4ea-c3d5003b4144
@@ -25,7 +25,7 @@ Responsibility: Created 時点の再生実装が MXL / MusicXML 4.0 の再生関
 - **時間軸**: OSMD が作った source measure / timestamp / note length から tick を作る。`backup` / `forward` / multiple voice / multiple staff は直接解釈せず、OSMD の正規化結果に依存する。
 - **テンポ**: score から抽出できた最初の BPM を UI の初期値にする。再生中の tempo change map は作らない。
 - **反復やジャンプ**: MusicXML の repeat、ending、D.C. / D.S. / coda / fine は展開しない。今回追加した Loop はユーザー操作の transport loop であり、MusicXML の repeat 解釈ではない。
-- **音符装飾**: MusicXML の note 装飾は `notations` 配下に `articulations`、`ornaments`、`technical`、`dynamics`、`fermata`、`arpeggiate` などとして表れる。現在の再生実装はこれらを timeline に入れず、OSMD が描画した視覚要素として表示されるだけで、発音 timing / duration / velocity / pitch /奏法には反映しない。
+- **音符装飾**: MusicXML の note 装飾は `notations` 配下に `articulations`、`ornaments`、`technical`、`dynamics`、`fermata`、`arpeggiate` などとして表れる。現在の再生実装は OSMD が `VoiceEntry.Articulations` として解釈した `accent`、`strong-accent` 系、`staccato`、`staccatissimo` だけを、既存 note-on / note-off event の velocity / duration 変形として反映する。それ以外の装飾は視覚要素として表示されるだけで、発音 timing / pitch / 奏法には反映しない。
 
 ### Coverage Map
 
@@ -45,15 +45,15 @@ Responsibility: Created 時点の再生実装が MXL / MusicXML 4.0 の再生関
 | tempo changes | timeline event に tempo を持たない。 | **非対応**。 |
 | repeat / ending | 展開しない。 | **非対応**。 |
 | D.C. / D.S. / coda / fine | `<sound>` attributes を見ない。 | **非対応**。 |
-| tie | tie chain を結合しない。 | **非対応寄り**。同音連結が再アタックされる可能性がある。 |
+| tie | OSMD の `sourceNote.NoteTie.notes` から tie chain を読み、chain 先頭の note-on と chain 末尾の note-off に畳む。 | **部分対応**。同音連結の再アタックを避ける。範囲再生が tie chain 途中から始まる場合の再発音補正は行わない。 |
 | grace / cue / hidden note | skip する。 | **明示的に非対象**。 |
 | unpitched / percussion | `Pitch` がない note は再生されない。 | **非対応**。 |
 | dynamics / velocity | 固定 velocity ratio `0.8` と UI の velocity sensitivity を使う。 | **非対応寄り**。MusicXML dynamics は反映しない。 |
-| articulations | `staccato`、`tenuto`、`accent`、`strong-accent` などを読まない。 | **非対応**。duration 短縮、velocity 強調、attack 変化はしない。 |
+| articulations | OSMD の `VoiceEntry.Articulations` から `accent`、`strong-accent` 系、`staccato`、`staccatissimo` を読む。 | **部分対応**。accent / strong-accent 系は velocity ratio、staccato 系は note-off tick の単純変形だけを行い、奏法や attack shape は扱わない。 |
 | ornaments | trill、turn、mordent、tremolo、wavy-line などを読まない。 | **非対応**。補助音、反復音、揺れは生成しない。 |
 | technical indications | fingering、pluck、harmonic、bend、hammer-on / pull-off などを読まない。 | **非対応**。ピアノ練習表示としても発音には使わない。 |
-| slur / phrase | `slur` を読まない。 | **非対応**。legato 化や note overlap 調整はしない。 |
-| fermata / breath / caesura | note / articulation 系の停止・間合いを読まない。 | **非対応**。tick は元の note duration のまま進む。 |
+| slur / phrase | `slur` を再生用には読まない。 | **非対応**。legato 化や note overlap 調整はしない。 |
+| fermata / breath / caesura | note / articulation 系の停止・間合いを読まない。 | **非対応**。fermata は、対象 note だけでなく後続 tick の扱いを含む設計が必要なため、簡易変形の対象から外す。 |
 | arpeggiate / non-arpeggiate | 和音の発音順制御を読まない。 | **非対応**。同一 timestamp の chord は同時発音になる。 |
 | pedal / sustain | UI の sustain setting と MIDI input sustain はある。 | **MusicXML pedal は非対応**。 |
 | swing / pizzicato / play technique | `<sound>` / `<play>` / `<swing>` などを timeline に反映しない。 | **非対応**。 |
@@ -65,13 +65,13 @@ Responsibility: Created 時点の再生実装が MXL / MusicXML 4.0 の再生関
 - `src/hooks/useScoreLibrary.ts`: `.mxl` は binary string、`.xml` / `.musicxml` は text として保存する。MXL の container 構造はアプリ側で展開・検証しない。
 - `src/components/ScoreDisplay.tsx`: `osmd.load(data)` 後に `extractSourceNoteMidiMap()`、`extractMeasureContexts()`、`extractPlaybackTimeline()` を呼ぶ。`visualTranspose` は OSMD render 前に `osmd.Sheet.Transpose` として適用する。
 - `src/utils/osmdCoordinates.ts`: timeline は `SourceMeasures`、`VerticalSourceStaffEntryContainers`、`StaffEntries`、`VoiceEntries`、`Notes` から作る。休符、grace、cue、hidden note は skip する。
-- `src/utils/osmdCoordinates.ts`: `sourceNote.Notations`、`sourceNote.Articulations`、`sourceNote.Ornaments` 相当の情報は参照していない。`PlaybackNoteEvent` に装飾、奏法、velocity、発音変形を表す field もない。
+- `src/utils/osmdCoordinates.ts`: OSMD の `VoiceEntry.Articulations` から一部 articulation を読み、`PlaybackNoteEvent.velocityRatio` と note-off tick の前倒しだけに変換する。`sourceNote.Notations`、`sourceNote.Ornaments`、奏法別の詳細な発音 shape は参照しない。
 - `src/App.tsx`: scheduler は tick 昇順の note-on / note-off を進める。tempo map、repeat 展開、instrument map は持たない。
 - `src/hooks/usePianoSound.ts`: 再生は単一 channel / 現在の SoundFont / 現在の GM program に集約される。MusicXML の `midi-instrument` や `sound` 内の playback 指定は使わない。
 
 ### 判断
 
-現在の再生機能は、MusicXML を「演奏データ」として網羅的に解釈する実装ではなく、「表示済み譜面から単純な note-on / note-off list を作る」実装である。したがって、対応範囲を数値化するなら、MusicXML playback semantics のうち **直線的な pitched notes / rests / chords / basic voices / initial tempo だけ**を対象にする段階で、反復、テンポ変化、音符装飾、奏法、楽器、percussion、正確な tie 処理を含む実演奏仕様の大半は未対応と見るのが妥当である。
+現在の再生機能は、MusicXML を「演奏データ」として網羅的に解釈する実装ではなく、「表示済み譜面から単純な note-on / note-off list を作る」実装である。したがって、対応範囲を数値化するなら、MusicXML playback semantics のうち **直線的な pitched notes / rests / chords / basic voices / initial tempo / tie chain / 一部 articulation の単純変形**だけを対象にする段階で、反復、テンポ変化、多くの音符装飾、fermata、奏法、楽器、percussion を含む実演奏仕様の大半は未対応と見るのが妥当である。
 
 ## Detail
 
@@ -80,8 +80,8 @@ Responsibility: Created 時点の再生実装が MXL / MusicXML 4.0 の再生関
 1. **timeline extraction の正本化**: OSMD private-ish object を直接なぞるだけでなく、MusicXML duration / divisions / backup / forward / chord / voice / staff を明示した中間表現に落とす。
 2. **tempo map**: 初期 BPM だけでなく、tick ごとの tempo event を持つ。
 3. **repeat graph**: repeat / ending / D.C. / D.S. / coda / fine を display order とは別の playback order として展開する。
-4. **tie merge**: `tie` を発音継続として扱い、`tied` notation と混同しない。
-5. **note notation interpreter**: `notations` 配下の `articulations`、`ornaments`、`technical`、`dynamics`、`fermata`、`arpeggiate` を、実装対象にするものと表示のみのものへ分類する。
+4. **tie merge の範囲拡張**: 基本の tie chain は対応済み。範囲再生が tie chain 途中から始まる場合や、tie chain の一部だけを選択した場合の再発音方針は未整理。
+5. **note notation interpreter**: `accent`、`strong-accent` 系、`staccato`、`staccatissimo` は単純変形として対応済み。次に `arpeggiate`、`dynamics`、`fermata`、`tenuto`、breath / caesura を、実装対象にするものと表示のみのものへ分類する。
 6. **instrument map**: part / score-instrument / midi-instrument / sound instrument-change を channel / program / soundfont selection へ接続する。
 7. **percussion support**: unpitched note と percussion map を MIDI note へ変換する。
 

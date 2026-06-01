@@ -1,4 +1,4 @@
-import { OpenSheetMusicDisplay, KeyInstruction, ClefInstruction, ClefEnum } from 'opensheetmusicdisplay';
+import { OpenSheetMusicDisplay, KeyInstruction, ClefInstruction, ClefEnum, ArticulationEnum } from 'opensheetmusicdisplay';
 import { ColumnDetail, MeasureContext, ClefType, NoteDetail, PlaybackNoteEvent, PlaybackTimeline } from '../types/piano';
 
 const PLAYBACK_PPQ = 480;
@@ -47,6 +47,52 @@ const shouldSkipPlaybackNote = (sourceNote: any): boolean => {
   if (typeof sourceNote.isRest === 'function' && sourceNote.isRest()) return true;
   if (sourceNote.IsGraceNote || sourceNote.IsCueNote || sourceNote.PrintObject === false) return true;
   return false;
+};
+
+const getArticulationEnums = (sourceNote: any): Set<number> => {
+  const articulations = sourceNote?.ParentVoiceEntry?.Articulations ?? [];
+  return new Set(articulations
+    .map((articulation: any) => articulation?.articulationEnum)
+    .filter((value: unknown): value is number => typeof value === 'number'));
+};
+
+const getPlaybackModifiers = (sourceNote: any): { durationMultiplier: number; velocityRatio: number } => {
+  const articulations = getArticulationEnums(sourceNote);
+  const hasStaccatissimo = articulations.has(ArticulationEnum.staccatissimo);
+  const hasStaccato = articulations.has(ArticulationEnum.staccato);
+  const hasStrongAccent = articulations.has(ArticulationEnum.strongaccent) ||
+    articulations.has(ArticulationEnum.invertedstrongaccent) ||
+    articulations.has(ArticulationEnum.marcatoup) ||
+    articulations.has(ArticulationEnum.marcatodown);
+  const hasAccent = articulations.has(ArticulationEnum.accent);
+
+  let durationMultiplier = 1;
+  if (hasStaccatissimo) {
+    durationMultiplier = 0.35;
+  } else if (hasStaccato) {
+    durationMultiplier = 0.5;
+  }
+
+  let velocityRatio = 0.8;
+  if (hasStrongAccent) {
+    velocityRatio = 1.0;
+  } else if (hasAccent) {
+    velocityRatio = 0.92;
+  }
+
+  return { durationMultiplier, velocityRatio };
+};
+
+const getTieGroupNotes = (sourceNote: any): any[] => {
+  const tieNotes = sourceNote?.NoteTie?.notes;
+  if (!Array.isArray(tieNotes) || tieNotes.length <= 1) return [sourceNote];
+  return tieNotes.filter((note) => note && !shouldSkipPlaybackNote(note));
+};
+
+const getSourceNoteStartTicks = (sourceNote: any, fallbackTicks: number): number => {
+  return fractionToTicks(sourceNote?.getAbsoluteTimestamp?.()) ??
+    fractionToTicks(sourceNote?.ParentStaffEntry?.getAbsoluteTimestamp?.()) ??
+    fallbackTicks;
 };
 
 const getSourceNoteMidi = (sourceNote: any): number | null => {
@@ -328,6 +374,9 @@ export const extractPlaybackTimeline = (
             const noteDurationTicks = getSourceNoteDurationTicks(sourceNote);
             if (noteDurationTicks === null) return;
 
+            const tieGroupNotes = getTieGroupNotes(sourceNote);
+            if (tieGroupNotes.length > 1 && tieGroupNotes[0] !== sourceNote) return;
+
             const mapped = sourceNoteMap.get(sourceNote);
             const sourceMidi = sourceNoteMidiMap.get(sourceNote) ?? getSourceNoteMidi(sourceNote);
             if (sourceMidi === null) return;
@@ -336,7 +385,18 @@ export const extractPlaybackTimeline = (
             const measureNumber = mapped?.ctx.measureNumber ?? measure.MeasureNumber ?? measureIndex + 1;
             const systemId = mapped?.ctx.systemId ?? 0;
             const staffId = mapped?.ctx.staffId ?? sourceNote.ParentStaff?.idInMusicSheet ?? staffIndex;
-            const endTicks = startTicks + noteDurationTicks;
+            const playbackModifiers = getPlaybackModifiers(sourceNote);
+            const tiedEndTicks = tieGroupNotes.reduce((endTick, tiedNote) => {
+              const tiedNoteDurationTicks = getSourceNoteDurationTicks(tiedNote);
+              if (tiedNoteDurationTicks === null) return endTick;
+              const tiedNoteStartTicks = getSourceNoteStartTicks(tiedNote, startTicks);
+              return Math.max(endTick, tiedNoteStartTicks + tiedNoteDurationTicks);
+            }, startTicks + noteDurationTicks);
+            const rawDurationTicks = Math.max(1, tiedEndTicks - startTicks);
+            const adjustedDurationTicks = tieGroupNotes.length > 1
+              ? rawDurationTicks
+              : Math.max(1, Math.round(rawDurationTicks * playbackModifiers.durationMultiplier));
+            const endTicks = startTicks + adjustedDurationTicks;
             const renderedMidi = mapped?.detail.midi ?? sourceMidi;
             const soundingMidi = renderedMidi;
             const voiceId = voiceEntry.ParentVoice?.VoiceId ?? voiceIndex;
@@ -362,7 +422,8 @@ export const extractPlaybackTimeline = (
               sourceMidi,
               soundingMidi,
               renderedMidi,
-              durationTicks: noteDurationTicks,
+              durationTicks: adjustedDurationTicks,
+              velocityRatio: playbackModifiers.velocityRatio,
             });
 
             events.push({

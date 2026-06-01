@@ -19,21 +19,25 @@ export const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="
         <pitch><step>C</step><octave>4</octave></pitch>
         <duration>1</duration>
         <type>eighth</type>
+        <notations><articulations><accent/></articulations></notations>
       </note>
       <note>
         <pitch><step>D</step><octave>4</octave></pitch>
         <duration>1</duration>
         <type>eighth</type>
+        <notations><articulations><strong-accent type="up"/></articulations></notations>
       </note>
       <note>
         <pitch><step>E</step><alter>-1</alter><octave>4</octave></pitch>
         <duration>1</duration>
         <type>eighth</type>
+        <notations><articulations><staccato/></articulations></notations>
       </note>
       <note>
         <pitch><step>F</step><octave>4</octave></pitch>
         <duration>1</duration>
         <type>eighth</type>
+        <notations><articulations><staccatissimo/></articulations></notations>
       </note>
       <note>
         <pitch><step>G</step><octave>4</octave></pitch>
@@ -64,8 +68,17 @@ export const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="
       </attributes>
       <note>
         <pitch><step>C</step><octave>4</octave></pitch>
-        <duration>2</duration>
-        <type>half</type>
+        <duration>1</duration>
+        <tie type="start"/>
+        <type>quarter</type>
+        <notations><tied type="start"/></notations>
+      </note>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>1</duration>
+        <tie type="stop"/>
+        <type>quarter</type>
+        <notations><tied type="stop"/></notations>
       </note>
       <note>
         <pitch><step>E</step><octave>4</octave></pitch>

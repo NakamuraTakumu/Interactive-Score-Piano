@@ -269,7 +269,7 @@ function App() {
 
     const startToken = playbackStartTokenRef.current;
     expiredPlaybackNoteIdsRef.current.delete(eventBaseId);
-    void playPlaybackNoteOn(event.soundingMidi, 0.8, () =>
+    void playPlaybackNoteOn(event.soundingMidi, event.velocityRatio ?? 0.8, () =>
       playbackStartTokenRef.current === startToken &&
       playbackSessionRef.current.status === 'playing' &&
       !expiredPlaybackNoteIdsRef.current.has(eventBaseId)

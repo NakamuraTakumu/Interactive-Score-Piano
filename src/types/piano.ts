@@ -106,6 +106,7 @@ export interface PlaybackNoteEvent {
   soundingMidi: number;
   renderedMidi: number;
   durationTicks?: number;
+  velocityRatio?: number;
 }
 
 export interface PlaybackTimeline {

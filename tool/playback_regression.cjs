@@ -39,6 +39,71 @@ const getGreenKeyboardMidis = async (page) => page.locator('[data-testid="piano-
 
 const countGreenKeyboardKeys = async (page) => (await getGreenKeyboardMidis(page)).length;
 
+const assertSampleTieTimeline = async (page) => {
+  const measureTwoEvents = await page.evaluate(async () => {
+    const transformedUtils = await fetch('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts').then((response) => response.text());
+    const osmdImport = transformedUtils.match(/from\s+["']([^"']*opensheetmusicdisplay[^"']*)["']/)?.[1];
+    if (!osmdImport) throw new Error('Could not resolve transformed OSMD import path.');
+
+    const osmdModule = await import(osmdImport);
+    const OpenSheetMusicDisplay = osmdModule.OpenSheetMusicDisplay ?? osmdModule.default?.OpenSheetMusicDisplay;
+    const { sampleMusicXML } = await import('/Interactive-Score-Piano/src/data/sampleScores.ts');
+    const {
+      extractMeasureContexts,
+      extractPlaybackTimeline,
+      extractSourceNoteMidiMap,
+      getPixelPerUnit,
+    } = await import('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts');
+
+    const host = document.createElement('div');
+    host.style.width = '1200px';
+    document.body.appendChild(host);
+    const osmd = new OpenSheetMusicDisplay(host, {
+      backend: 'svg',
+      drawTitle: false,
+      drawPartNames: false,
+      drawSlurs: true,
+      drawingParameters: 'compact',
+    });
+    await osmd.load(sampleMusicXML);
+    osmd.render();
+    const pixelPerUnit = getPixelPerUnit(osmd, host);
+    const contexts = extractMeasureContexts(osmd, pixelPerUnit);
+    const timeline = extractPlaybackTimeline(osmd, contexts, extractSourceNoteMidiMap(osmd));
+    host.remove();
+
+    return timeline.events
+      .filter((event) => event.measureNumber === 2)
+      .map((event) => ({
+        type: event.type,
+        midi: event.sourceMidi,
+        tick: event.tick,
+        durationTicks: event.durationTicks ?? null,
+      }));
+  });
+
+  const tiedCNoteOns = measureTwoEvents.filter((event) => event.type === 'note-on' && event.midi === 60);
+  const tiedCNoteOffs = measureTwoEvents.filter((event) => event.type === 'note-off' && event.midi === 60);
+  if (tiedCNoteOns.length !== 1 || tiedCNoteOffs.length !== 1) {
+    throw new Error(`Expected sample tied C to be merged into one note-on/off pair. events=${JSON.stringify(measureTwoEvents)}`);
+  }
+  if (tiedCNoteOns[0].durationTicks !== tiedCNoteOffs[0].tick - tiedCNoteOns[0].tick) {
+    throw new Error(`Expected tied C duration to reach its merged note-off. events=${JSON.stringify(measureTwoEvents)}`);
+  }
+};
+
+const stopPlaybackIfEnabled = async (page) => {
+  const stopButton = page.getByLabel('Stop simple playback');
+  if (await stopButton.isDisabled()) return;
+  try {
+    await stopButton.click({ timeout: 1000 });
+  } catch (error) {
+    if (!String(error).includes('Timeout') && !String(error).includes('not enabled')) {
+      throw error;
+    }
+  }
+};
+
 const countRangeRects = async (page) => page.locator('[data-testid="score-range-overlay"]').evaluateAll((elements) =>
   elements.filter((element) => {
     const rect = element.getBoundingClientRect();
@@ -68,6 +133,10 @@ const dragScoreRange = async (page, points, endX = points.endX, afterCommitDelay
 const observePlaybackLoop = async (page) => {
   let greenEdges = 0;
   let sawClear = true;
+  let firstSignature = null;
+  let previousSignature = null;
+  let sawDifferentAfterFirst = false;
+  let signatureLoops = 0;
   let maxGreenScore = 0;
   let maxGreenKeyboard = 0;
   let greenScoreMidis = [];
@@ -79,6 +148,10 @@ const observePlaybackLoop = async (page) => {
     const nextKeyboardMidis = await getGreenKeyboardMidis(page);
     const hasMatchingGreen = nextScoreMidis.length > 0 &&
       nextKeyboardMidis.some((midi) => nextScoreMidis.includes(midi));
+    const matchingMidis = nextScoreMidis
+      .filter((midi) => nextKeyboardMidis.includes(midi))
+      .sort((left, right) => left - right);
+    const signature = matchingMidis.join(',');
 
     if (nextScoreMidis.length > maxGreenScore) {
       greenScoreMidis = nextScoreMidis;
@@ -92,14 +165,27 @@ const observePlaybackLoop = async (page) => {
       greenEdges += 1;
       sawClear = false;
     }
+    if (hasMatchingGreen && signature !== previousSignature) {
+      if (firstSignature === null) {
+        firstSignature = signature;
+        signatureLoops = 1;
+      } else if (signature === firstSignature && sawDifferentAfterFirst) {
+        signatureLoops += 1;
+        sawDifferentAfterFirst = false;
+      } else if (signature !== firstSignature) {
+        sawDifferentAfterFirst = true;
+      }
+      previousSignature = signature;
+    }
     if (nextScoreMidis.length === 0 && nextKeyboardMidis.length === 0) {
       sawClear = true;
+      previousSignature = null;
     }
-    if (greenEdges >= 2) break;
+    if (Math.max(greenEdges, signatureLoops) >= 2) break;
     await page.waitForTimeout(75);
   }
 
-  return { greenEdges, maxGreenScore, maxGreenKeyboard, greenScoreMidis, greenKeyboardMidis };
+  return { greenEdges: Math.max(greenEdges, signatureLoops), maxGreenScore, maxGreenKeyboard, greenScoreMidis, greenKeyboardMidis };
 };
 
 const getScoreDragPoints = async (page) => page.locator('path, ellipse').evaluateAll((elements) => {
@@ -168,6 +254,7 @@ const waitForScore = async (page) => {
   await page.goto(APP_URL, { waitUntil: 'networkidle' });
   await waitForScore(page);
   await page.waitForTimeout(1200);
+  await assertSampleTieTimeline(page);
 
   const points = await getScoreDragPoints(page);
   const { duringRange, afterRange } = await dragScoreRange(page, points);
@@ -191,10 +278,7 @@ const waitForScore = async (page) => {
     if (maxGreenScore > 0 && maxGreenKeyboard > 0) break;
   }
 
-  const stopButtonDisabled = await page.getByLabel('Stop simple playback').isDisabled();
-  if (!stopButtonDisabled) {
-    await page.getByLabel('Stop simple playback').click();
-  }
+  await stopPlaybackIfEnabled(page);
   await page.waitForTimeout(500);
   const greenAfterStop = await countGreenScoreElements(page) + await countGreenKeyboardKeys(page);
 
@@ -215,7 +299,7 @@ const waitForScore = async (page) => {
 
   await page.getByTestId('playback-loop-toggle').click();
   const loopPoints = await getScoreDragPoints(page);
-  const loopEndX = Math.min(loopPoints.endX, loopPoints.startX + 90);
+  const loopEndX = Math.min(loopPoints.endX, loopPoints.startX + 180);
   const loopRange = await dragScoreRange(page, loopPoints, loopEndX);
   const loopObservation = await observePlaybackLoop(page);
   const loopRangeAfterObservation = await countRangeRects(page);

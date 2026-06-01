@@ -1,7 +1,7 @@
 # Score Playback Specification
 
 - Created: 2026-05-19 13:08 UTC
-- Updated: 2026-05-24 08:10 UTC
+- Updated: 2026-06-01 14:16 UTC
 - Model: gpt-5.5
 - Reasoning-Effort: high
 - Session: 019e4058-0985-7fc3-a4ea-c3d5003b4144
@@ -30,7 +30,7 @@ Responsibility: 表示中の楽譜を簡単に再生する v1 機能の範囲、
 
 ### Non-Scope
 
-- MusicXML の tempo change, repeat, jump, coda, fine, pedal, articulation, swing, instrument change は v1 では解釈しない。
+- MusicXML の tempo change, repeat, jump, coda, fine, pedal, fermata, tenuto, swing, instrument change は v1 では解釈しない。`accent`、`strong-accent` 系、`staccato`、`staccatissimo` は簡易 articulation として既存 note-on / note-off を変形する。
 - 楽譜を開いただけで自動再生しない。
 - MIDI 入力の練習判定や追従再生は扱わない。
 - 正式な SMF export / import は扱わない。
@@ -110,6 +110,7 @@ interface PlaybackNoteEvent {
   soundingMidi: number;
   renderedMidi: number;
   durationTicks?: number;
+  velocityRatio?: number;
 }
 
 interface PlaybackTimeline {
@@ -127,6 +128,7 @@ interface PlaybackTimeline {
 - `soundingMidi`: 再生対象の pitch。v1 では `renderedMidi` と同じ値を使い、actual synth pitch は `soundingMidi + settings.transpose` を再生直前に clamp して使う。
 - `columnKey`: score cursor と既存 column overlay との接続点にする。
 - `durationTicks`: note-on event 側では抽出できた note duration を保持する。note-off event 側では省略してよい。
+- `velocityRatio`: note-on event 側で MIDI velocity の倍率を保持する。未指定の場合は既定の簡易再生 velocity を使う。
 - `scoreBpm`: MusicXML / OSMD から抽出できた楽譜上の代表 BPM。抽出できない場合は省略する。
 
 ### Range Selection Model
@@ -165,7 +167,8 @@ interface ScoreRangeSelection extends ScoreRangeDraft {}
 - chord は同じ `tick` と `columnKey` を共有する複数 note-on / note-off event として表す。
 - rest は発音 event を作らないが、後続 note の `tick` を進めるために duration として反映する。
 - 複数 voice がある場合は、voice ごとに tick を進め、最終的に全 event を `tick`, event order, `id` で安定 sort する。
-- tie は v1 では同じ pitch の連続 note を結合できる場合だけ結合する。結合できない tie は通常 note として扱う。
+- tie は OSMD の `sourceNote.NoteTie.notes` を使い、chain 先頭の note-on と chain 末尾の note-off に畳む。chain 途中の note は再アタックしない。slur は v1 では再生用に解釈せず、legato 化や note overlap 調整を行わない。
+- `accent`、`strong-accent` 系は note-on event の `velocityRatio` を上げる。`staccato`、`staccatissimo` は note-off tick を単純に前へ動かす。後続 event 全体の tick はずらさない。
 - grace note, ornament, cue note, hidden note は v1 では発音 event を作らない。
 - timeline 抽出時は repeat / jump を展開しない。表示順に現れる measure を一度だけ読む。
 - staff, system, measure, `columnKey` は既存の `MeasureContext` と同じ key 空間の値を使い、cursor 描画が座標 model へ戻れるようにする。
