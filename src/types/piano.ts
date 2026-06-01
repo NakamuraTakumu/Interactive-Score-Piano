@@ -34,7 +34,7 @@ export interface PianoSettings {
   velocitySensitivity: number;
   highlightBlackKeys: boolean;
   scoreDrawingParameters: ScoreDrawingParameters;
-  playbackBpm: number;
+  playbackSpeedMultiplier: number;
   playbackLoop: boolean;
 }
 
@@ -102,6 +102,7 @@ export interface PlaybackNoteEvent {
   systemId: number;
   staffId: number;
   noteIdentity: string;
+  noteIdentities: string[];
   sourceMidi: number;
   soundingMidi: number;
   renderedMidi: number;
@@ -109,10 +110,15 @@ export interface PlaybackNoteEvent {
   velocityRatio?: number;
 }
 
+export interface PlaybackTempoEvent {
+  tick: number;
+  bpm: number;
+}
+
 export interface PlaybackTimeline {
   ppq: number;
   durationTicks: number;
   events: PlaybackNoteEvent[];
+  tempoEvents: PlaybackTempoEvent[];
   generation?: number;
-  scoreBpm?: number;
 }

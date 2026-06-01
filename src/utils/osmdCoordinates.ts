@@ -1,5 +1,6 @@
 import { OpenSheetMusicDisplay, KeyInstruction, ClefInstruction, ClefEnum, ArticulationEnum } from 'opensheetmusicdisplay';
-import { ColumnDetail, MeasureContext, ClefType, NoteDetail, PlaybackNoteEvent, PlaybackTimeline } from '../types/piano';
+import { ColumnDetail, MeasureContext, ClefType, NoteDetail, PlaybackNoteEvent, PlaybackTempoEvent, PlaybackTimeline } from '../types/piano';
+import { FALLBACK_SCORE_BPM } from './playbackTempo';
 
 const PLAYBACK_PPQ = 480;
 
@@ -126,40 +127,88 @@ const normalizeBpm = (value: unknown): number | null => {
   return Math.max(20, Math.min(300, Math.round(value)));
 };
 
-const extractScoreBpm = (osmd: OpenSheetMusicDisplay): number | undefined => {
-  const sheet: any = osmd.Sheet;
-  const candidates: unknown[] = [];
+const getTempoExpressionBpm = (expression: any): number | null => {
+  const candidates: unknown[] = [
+    expression?.InstantaneousTempo?.TempoInBpm,
+    expression?.instantaneousTempo?.TempoInBpm,
+    expression?.instantaneousTempo?.tempoInBpm,
+  ];
 
-  const tempoExpressions = sheet?.TimestampSortedTempoExpressionsList ?? [];
-  tempoExpressions.forEach((expression: any) => {
-    candidates.push(expression?.InstantaneousTempo?.TempoInBpm);
-    expression?.EntriesList?.forEach((entry: any) => {
-      candidates.push(entry?.Expression?.TempoInBpm);
-    });
+  expression?.EntriesList?.forEach((entry: any) => {
+    candidates.push(entry?.Expression?.TempoInBpm, entry?.expression?.TempoInBpm, entry?.expression?.tempoInBpm);
   });
-
-  sheet?.SourceMeasures?.forEach((measure: any) => {
-    candidates.push(measure?.TempoInBPM);
-    measure?.TempoExpressions?.forEach((expression: any) => {
-      candidates.push(expression?.InstantaneousTempo?.TempoInBpm);
-      expression?.EntriesList?.forEach((entry: any) => {
-        candidates.push(entry?.Expression?.TempoInBpm);
-      });
-    });
+  expression?.entriesList?.forEach((entry: any) => {
+    candidates.push(entry?.Expression?.TempoInBpm, entry?.expression?.TempoInBpm, entry?.expression?.tempoInBpm);
   });
-
-  candidates.push(
-    sheet?.getExpressionsStartTempoInBPM?.(),
-    sheet?.DefaultStartTempoInBpm,
-    sheet?.userStartTempoInBPM,
-  );
 
   for (const candidate of candidates) {
     const bpm = normalizeBpm(candidate);
     if (bpm !== null) return bpm;
   }
 
-  return undefined;
+  return null;
+};
+
+const getTempoExpressionTick = (expression: any): number | null => {
+  const measureStartTicks = fractionToTicks(
+    expression?.sourceMeasure?.AbsoluteTimestamp ??
+    expression?.sourceMeasure?.absoluteTimestamp ??
+    expression?.SourceMeasure?.AbsoluteTimestamp ??
+    expression?.SourceMeasure?.absoluteTimestamp
+  ) ?? 0;
+  const localTicks = fractionToTicks(
+    expression?.Timestamp ??
+    expression?.timestamp ??
+    expression?.AbsoluteTimestamp ??
+    expression?.absoluteTimestamp
+  );
+  if (localTicks === null) return null;
+  return measureStartTicks + localTicks;
+};
+
+const extractTempoEvents = (osmd: OpenSheetMusicDisplay): PlaybackTempoEvent[] => {
+  const sheet: any = osmd.Sheet;
+  const tempoEvents: PlaybackTempoEvent[] = [];
+
+  const addTempoExpression = (expression: any) => {
+    const bpm = getTempoExpressionBpm(expression);
+    const tick = getTempoExpressionTick(expression);
+    if (bpm === null || tick === null) return;
+    tempoEvents.push({ tick, bpm });
+  };
+
+  const timestampSortedExpressions = sheet?.TimestampSortedTempoExpressionsList ?? sheet?.timestampSortedTempoExpressionsList ?? [];
+  timestampSortedExpressions.forEach(addTempoExpression);
+
+  if (tempoEvents.length === 0) {
+    sheet?.SourceMeasures?.forEach((measure: any) => {
+      measure?.TempoExpressions?.forEach(addTempoExpression);
+      measure?.tempoExpressions?.forEach(addTempoExpression);
+    });
+  }
+
+  const byTick = new Map<number, number>();
+  tempoEvents
+    .sort((left, right) => left.tick - right.tick)
+    .forEach((event) => {
+      byTick.set(event.tick, event.bpm);
+    });
+
+  const sortedEntries = Array.from(byTick.entries())
+    .map(([tick, bpm]) => ({ tick, bpm }))
+    .sort((left, right) => left.tick - right.tick);
+
+  if (sortedEntries.length === 0) {
+    return [{ tick: 0, bpm: FALLBACK_SCORE_BPM }];
+  }
+
+  if (!byTick.has(0)) {
+    byTick.set(0, sortedEntries[0].bpm);
+  }
+
+  return Array.from(byTick.entries())
+    .map(([tick, bpm]) => ({ tick, bpm }))
+    .sort((left, right) => left.tick - right.tick);
 };
 
 export const getPixelPerUnit = (osmd: OpenSheetMusicDisplay, container: HTMLElement): number => {
@@ -408,6 +457,12 @@ export const extractPlaybackTimeline = (
               voiceId,
               noteIndex
             ].join(':');
+            const noteIdentities = Array.from(new Set(
+              tieGroupNotes
+                .map((tiedNote) => sourceNoteMap.get(tiedNote)?.detail.noteIdentity)
+                .filter((identity: unknown): identity is string => typeof identity === 'string' && identity.length > 0)
+            ));
+            if (noteIdentities.length === 0) noteIdentities.push(noteIdentity);
             const idBase = `${measureIndex}-${containerIndex}-${staffIndex}-${voiceId}-${noteIndex}-${columnKey}-${sourceMidi}`;
 
             events.push({
@@ -419,6 +474,7 @@ export const extractPlaybackTimeline = (
               systemId,
               staffId,
               noteIdentity,
+              noteIdentities,
               sourceMidi,
               soundingMidi,
               renderedMidi,
@@ -435,6 +491,7 @@ export const extractPlaybackTimeline = (
               systemId,
               staffId,
               noteIdentity,
+              noteIdentities,
               sourceMidi,
               soundingMidi,
               renderedMidi,
@@ -457,7 +514,7 @@ export const extractPlaybackTimeline = (
     ppq: PLAYBACK_PPQ,
     durationTicks,
     events,
-    scoreBpm: extractScoreBpm(osmd),
+    tempoEvents: extractTempoEvents(osmd),
   };
 };
 

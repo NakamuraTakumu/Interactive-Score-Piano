@@ -12,6 +12,7 @@ import { usePianoSettings } from './hooks/usePianoSettings'
 import { PlaybackNoteEvent, PlaybackStatus, PlaybackTimeline, SavedScore, ScoreRangeSelection, SelectionResult } from './types/piano'
 import { DEFAULT_SOUND_FONT_ID, SOUND_FONT_PRESETS, SoundFontOption } from './data/soundFonts'
 import { deleteUserSoundFont, listUserSoundFonts, saveUserSoundFont } from './utils/soundFontStorage'
+import { advanceTickByElapsedMs, formatTempoLabel } from './utils/playbackTempo'
 
 const theme = createTheme({
   palette: {
@@ -26,7 +27,8 @@ const theme = createTheme({
 const MemoizedScoreDisplay = memo(ScoreDisplay);
 const EMPTY_NOTES = new Set<number>();
 const getPlaybackEventBaseId = (event: PlaybackNoteEvent) => event.id.replace(/-(on|off)$/, '');
-const getPlaybackEventNoteKey = (event: PlaybackNoteEvent) => event.noteIdentity;
+const getPlaybackEventNoteKeys = (event: PlaybackNoteEvent) =>
+  event.noteIdentities.length > 0 ? event.noteIdentities : [event.noteIdentity];
 
 type PlaybackMode = 'full' | 'range';
 type PlaybackErrorKind = 'timeline' | 'range' | 'audio';
@@ -125,9 +127,8 @@ function App() {
   const expiredPlaybackNoteIdsRef = useRef<Set<string>>(new Set());
   const latestPlaybackTimelineGenerationRef = useRef(0);
   const playbackTimelineRef = useRef<PlaybackTimeline | null>(null);
-  const playbackBpmRef = useRef(settings.playbackBpm);
+  const playbackSpeedMultiplierRef = useRef(settings.playbackSpeedMultiplier);
   const playbackLoopRef = useRef(settings.playbackLoop);
-  const scoreBpmSourceKeyRef = useRef<string | null>(null);
 
   const updatePlaybackSession = useCallback((updater: PlaybackSession | ((session: PlaybackSession) => PlaybackSession)) => {
     const current = playbackSessionRef.current;
@@ -161,8 +162,12 @@ function App() {
     [activePlaybackEvents]
   );
   const playbackActiveNoteKeys = useMemo(
-    () => new Set(activePlaybackEvents.map(getPlaybackEventNoteKey)),
+    () => new Set(activePlaybackEvents.flatMap(getPlaybackEventNoteKeys)),
     [activePlaybackEvents]
+  );
+  const playbackTempoLabel = useMemo(
+    () => formatTempoLabel(playbackTimeline?.tempoEvents),
+    [playbackTimeline]
   );
 
   // Rename dialog state
@@ -198,9 +203,15 @@ function App() {
   const getCurrentPlaybackTick = useCallback(() => {
     const session = playbackSessionRef.current;
     if (session.status !== 'playing') return session.tick;
+    const timeline = playbackTimelineRef.current;
     const elapsedMs = performance.now() - session.scheduler.startTime;
-    const ticksPerMs = (playbackBpmRef.current * (playbackTimelineRef.current?.ppq ?? 480)) / 60000;
-    return session.scheduler.startTick + elapsedMs * ticksPerMs;
+    return advanceTickByElapsedMs(
+      session.scheduler.startTick,
+      elapsedMs,
+      timeline?.tempoEvents ?? [],
+      timeline?.ppq ?? 480,
+      playbackSpeedMultiplierRef.current
+    );
   }, []);
 
   const clearActivePlaybackNotes = useCallback(() => {
@@ -531,17 +542,8 @@ function App() {
       setPlaybackIssue('timeline', 'No playable notes for simple playback.');
       return;
     }
-    if (
-      typeof nextTimeline.scoreBpm === 'number' &&
-      scoreData &&
-      scoreBpmSourceKeyRef.current !== scoreData
-    ) {
-      updateSetting('playbackBpm', nextTimeline.scoreBpm);
-      playbackBpmRef.current = nextTimeline.scoreBpm;
-      scoreBpmSourceKeyRef.current = scoreData;
-    }
     clearPlaybackIssue();
-  }, [clearPlaybackIssue, scoreData, setPlaybackIssue, stopPlayback, updateSetting]);
+  }, [clearPlaybackIssue, setPlaybackIssue, stopPlayback]);
 
   useEffect(() => {
     void refreshUserSoundFonts();
@@ -557,12 +559,8 @@ function App() {
   }, [settings.selectedSoundFontId, soundFontOptions, isSoundFontOptionsReady, updateSetting]);
 
   useEffect(() => {
-    scoreBpmSourceKeyRef.current = null;
-  }, [scoreData]);
-
-  useEffect(() => {
     const currentTick = getCurrentPlaybackTick();
-    playbackBpmRef.current = settings.playbackBpm;
+    playbackSpeedMultiplierRef.current = settings.playbackSpeedMultiplier;
     if (playbackSessionRef.current.status === 'playing') {
       updatePlaybackSession((session) => ({
         ...session,
@@ -574,7 +572,7 @@ function App() {
         },
       }));
     }
-  }, [getCurrentPlaybackTick, settings.playbackBpm, updatePlaybackSession]);
+  }, [getCurrentPlaybackTick, settings.playbackSpeedMultiplier, updatePlaybackSession]);
 
   useEffect(() => {
     playbackLoopRef.current = settings.playbackLoop;
@@ -808,6 +806,7 @@ function App() {
             playbackStatus={playbackStatus}
             canPlayback={canPlayback}
             playbackError={playbackError}
+            playbackTempoLabel={playbackTempoLabel}
             onTogglePlayback={togglePlayback}
             onStopPlayback={() => stopPlayback(true)}
           />

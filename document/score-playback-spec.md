@@ -22,7 +22,7 @@ Responsibility: 表示中の楽譜を簡単に再生する v1 機能の範囲、
 - **対象楽譜**: 既に OSMD で表示できる `.mxl`, `.xml`, `.musicxml`。
 - **開始条件**: Play button などの明示的な user gesture で開始する。
 - **音源**: 既存の `usePianoSound()` と現在選択中の SoundFont / GM program / volume / transpose 設定を使う。
-- **テンポ**: 楽譜から score BPM を抽出できる場合はそれを既定値にする。抽出できない場合は UI 設定の BPM を使う。BPM control の範囲は 40-200 BPM。
+- **テンポ**: 楽譜から数値 BPM の tempo map を抽出し、再生 tick は tempo map に従って進める。抽出できない場合は 100 BPM を使う。ユーザーは BPM を直接指定せず、速度倍率 `0.5x-2.0x` を変更する。
 - **再生範囲**: Play button は表示中スコアの先頭から末尾まで再生する。楽譜上の drag は mouseup で範囲を確定し、その範囲だけ再生する。
 - **ループ**: Loop toggle が ON の場合、全体再生と範囲再生の終端で同じ再生範囲を繰り返す。Loop toggle は保存され、OFF が既定値である。
 - **譜面同期**: 現在鳴っている column は既存の click selection と同じ緑の note / measure highlight として表示する。
@@ -30,7 +30,7 @@ Responsibility: 表示中の楽譜を簡単に再生する v1 機能の範囲、
 
 ### Non-Scope
 
-- MusicXML の tempo change, repeat, jump, coda, fine, pedal, fermata, tenuto, swing, instrument change は v1 では解釈しない。`accent`、`strong-accent` 系、`staccato`、`staccatissimo` は簡易 articulation として既存 note-on / note-off を変形する。
+- MusicXML の repeat, jump, coda, fine, pedal, fermata, tenuto, swing, instrument change は v1 では解釈しない。テンポは数値 BPM が読める tempo expression / sound tempo だけを扱い、`rit.` / `accel.` など文字だけの漸次変化は解釈しない。`accent`、`strong-accent` 系、`staccato`、`staccatissimo` は簡易 articulation として既存 note-on / note-off を変形する。
 - 楽譜を開いただけで自動再生しない。
 - MIDI 入力の練習判定や追従再生は扱わない。
 - 正式な SMF export / import は扱わない。
@@ -40,9 +40,9 @@ Responsibility: 表示中の楽譜を簡単に再生する v1 機能の範囲、
 - **Play/Pause button**: stopped または paused なら再生を開始または再開し、playing なら pause する。
 - **Stop button**: 再生中の全 note を止め、再生位置と cursor を先頭に戻す。
 - **Loop button**: 全体再生と範囲再生の loop ON / OFF を切り替える。切り替えは再生を開始、停止、一時停止しない。playing 中の変更は次の終端到達時から反映する。
-- **BPM control**: 40-200 BPM の slider または number input。playing 中の変更は次の scheduling window から反映する。
-- **Score BPM default**: score load 後の初回 timeline 抽出で `scoreBpm` が得られた場合、BPM control の値をその BPM に合わせる。resize や timeline 再抽出では user override を上書きしない。
-- **Drag range playback**: 楽譜上の left mouse drag は音符有無にかかわらず timestamp column から範囲選択 preview を表示し、drag 中は発音しない。preview は pointer が drag threshold を超えた時点で始め、同一 column 内の drag でも小節領域 overlay を表示する。left mouse up で選択範囲内を現在の BPM で再生する。
+- **Speed control**: `0.5x-2.0x` の速度倍率 slider を持つ。playing 中の変更は現在 tick を維持して scheduler を張り直し、次の scheduling window から反映する。
+- **Score tempo display**: score load 後の timeline 抽出で得られた `tempoEvents` を読み取り専用で表示する。複数テンポがある場合は最小 BPM と最大 BPM の範囲を表示する。
+- **Drag range playback**: 楽譜上の left mouse drag は音符有無にかかわらず timestamp column から範囲選択 preview を表示し、drag 中は発音しない。preview は pointer が drag threshold を超えた時点で始め、同一 column 内の drag でも小節領域 overlay を表示する。left mouse up で選択範囲内を譜面 tempo map と現在の速度倍率で再生する。
 - **Two-dimensional range selection**: drag range は横方向の timestamp column 範囲と縦方向の staff 範囲を持つ。右手譜表または左手譜表だけを選択した場合、範囲再生はその譜表の note だけを対象にする。
 - **Drag during playback**: playback 中でも drag range selection を受け付ける。既存の範囲 overlay が新しい drag preview に置き換わる場合は、既存の範囲再生を止める。mouseup 後は新しい範囲再生へ切り替える。確定した範囲の小節領域 overlay は、その範囲再生が続く間は残す。
 - **Click preview**: 単一 click は従来どおり一つの note column の音だけ短く鳴らす。緑の score note 装飾は click 後に保持しない。
@@ -51,7 +51,7 @@ Responsibility: 表示中の楽譜を簡単に再生する v1 機能の範囲、
 - **Timeline generation**: score data, visualTranspose, resize による timeline 再抽出は generation を持ち、古い非同期結果は採用しない。
 - **End of score**: Loop OFF では最後の note-off を処理したら `stopped` に戻し、発音中 note と cursor を消し、次の Play は先頭から始める。Loop ON では発音中 note を止め、同じ session のまま先頭から再開する。
 - **User-facing label**: UI では `Simple playback` または同等の短い label を使い、完全な MusicXML 再生ではないことを示す。
-- **Placement**: Play/Pause, Stop, BPM は score selector と音量 control の近くに置く。設定 popover 内ではなく、再生中に常時操作できる場所に置く。
+- **Placement**: Play/Pause, Stop, Speed は score selector と音量 control の近くに置く。設定 popover 内ではなく、再生中に常時操作できる場所に置く。
 - **Timeline failure**: timeline 抽出に失敗した場合は control 近くに短い error text を表示し、click selection と MIDI 入力は通常どおり使える状態に保つ。
 
 ### Playback Session
@@ -86,7 +86,7 @@ interface PlaybackSession {
 ```
 
 - `range`: 確定済み range overlay の正とする。range overlay を消す遷移では、対応する範囲再生も止める。
-- `activeEvents`: 発音中 notehead の正とする。score notehead は `noteIdentity` で特定し、layout key や pitch field を identity として使わない。
+- `activeEvents`: 発音中 notehead の正とする。score notehead は `noteIdentities` で特定し、layout key や pitch field を identity として使わない。
 - `currentColumnKey`: column cursor の正とする。発音中 notehead 判定には使わない。
 - `scheduler`: scheduler lifecycle の正とする。再生 clock、次 event index、range 終端、range filter は session と同じ lifecycle で更新する。
 - `loopStartTick` / `loopStartEventIndex`: loop 再開位置の正とする。全体再生は score 先頭、範囲再生は選択範囲の最初の playable event を指す。
@@ -106,6 +106,7 @@ interface PlaybackNoteEvent {
   systemId: number;
   staffId: number;
   noteIdentity: string;
+  noteIdentities: string[];
   sourceMidi: number;
   soundingMidi: number;
   renderedMidi: number;
@@ -117,19 +118,25 @@ interface PlaybackTimeline {
   ppq: number;
   durationTicks: number;
   events: PlaybackNoteEvent[];
+  tempoEvents: PlaybackTempoEvent[];
   generation?: number;
-  scoreBpm?: number;
+}
+
+interface PlaybackTempoEvent {
+  tick: number;
+  bpm: number;
 }
 ```
 
 - `sourceMidi`: MusicXML / OSMD から得た元 pitch。`visualTranspose` 適用前に source note から採取し、描画後の `NoteDetail.midi` から埋めない。
-- `noteIdentity`: source note と rendered notehead を対応づける識別子。score notehead highlight の照合に使う。
+- `noteIdentity`: source note と rendered notehead を対応づける代表識別子。単独 note の互換用に残す。
+- `noteIdentities`: 発音中に highlight する rendered notehead 識別子群。tie chain では chain 内の全 notehead を含め、slur では増やさない。
 - `renderedMidi`: 現在描画されている譜面上の pitch。score projection と notehead state の pitch として扱う。
 - `soundingMidi`: 再生対象の pitch。v1 では `renderedMidi` と同じ値を使い、actual synth pitch は `soundingMidi + settings.transpose` を再生直前に clamp して使う。
 - `columnKey`: score cursor と既存 column overlay との接続点にする。
 - `durationTicks`: note-on event 側では抽出できた note duration を保持する。note-off event 側では省略してよい。
 - `velocityRatio`: note-on event 側で MIDI velocity の倍率を保持する。未指定の場合は既定の簡易再生 velocity を使う。
-- `scoreBpm`: MusicXML / OSMD から抽出できた楽譜上の代表 BPM。抽出できない場合は省略する。
+- `tempoEvents`: MusicXML / OSMD から抽出した数値 tempo map。譜面上の数値 BPM 変更を絶対 tick に変換して保持し、抽出できない場合は `{ tick: 0, bpm: 100 }` を入れる。
 
 ### Range Selection Model
 
@@ -167,7 +174,7 @@ interface ScoreRangeSelection extends ScoreRangeDraft {}
 - chord は同じ `tick` と `columnKey` を共有する複数 note-on / note-off event として表す。
 - rest は発音 event を作らないが、後続 note の `tick` を進めるために duration として反映する。
 - 複数 voice がある場合は、voice ごとに tick を進め、最終的に全 event を `tick`, event order, `id` で安定 sort する。
-- tie は OSMD の `sourceNote.NoteTie.notes` を使い、chain 先頭の note-on と chain 末尾の note-off に畳む。chain 途中の note は再アタックしない。slur は v1 では再生用に解釈せず、legato 化や note overlap 調整を行わない。
+- tie は OSMD の `sourceNote.NoteTie.notes` を使い、chain 先頭の note-on と chain 末尾の note-off に畳む。chain 途中の note は再アタックせず、発音中は chain 内の notehead を同時に緑 highlight する。slur は v1 では再生用に解釈せず、legato 化や note overlap 調整を行わない。
 - `accent`、`strong-accent` 系は note-on event の `velocityRatio` を上げる。`staccato`、`staccatissimo` は note-off tick を単純に前へ動かす。後続 event 全体の tick はずらさない。
 - grace note, ornament, cue note, hidden note は v1 では発音 event を作らない。
 - timeline 抽出時は repeat / jump を展開しない。表示順に現れる measure を一度だけ読む。
@@ -221,10 +228,10 @@ interface ScoreRangeSelection extends ScoreRangeDraft {}
 9. 曲末到達後は残音がなく、status は `stopped`、cursor は非表示、次の Play は先頭から始まる。
 10. `events` は tick 昇順で、同一 tick では note-off が note-on より先に処理される。
 11. SoundFont 未ロード中または timeline 抽出失敗中は Play が disabled になり、既存の click selection と MIDI 入力は壊れない。
-12. 再生中の BPM 変更は次の scheduling window から反映される。
+12. 再生中の速度倍率変更は次の scheduling window から反映される。
 13. component unmount, score change, Stop の後に発音中 note が残らない。
-14. 楽譜に BPM がある場合、初期 BPM control はその値になる。抽出できない場合は既定 BPM を使う。
-15. 楽譜上を drag している間は発音せず、mouseup 後だけ選択範囲が現在の BPM で再生される。
+14. 楽譜に数値 BPM がある場合、tempo map はその値を保持し、UI は読み取り専用 tempo と速度倍率を表示する。抽出できない場合は 100 BPM を使う。
+15. 楽譜上を drag している間は発音せず、mouseup 後だけ選択範囲が譜面 tempo map と現在の速度倍率で再生される。
 16. drag 後の synthetic click で単一 column preview が重複して鳴らない。
 17. 範囲再生中、楽譜上の現在 column と下部 keyboard は click selection と同じ緑で同期表示される。
 18. 音符がない位置から drag を開始しても、同一小節内の timestamp column を始点として範囲選択が始まる。
@@ -248,7 +255,7 @@ interface ScoreRangeSelection extends ScoreRangeDraft {}
 
 - `src/App.tsx`: playback state と transport handler の所有。
 - `src/hooks/usePianoSound.ts`: synth への note scheduling API 追加。
-- `src/components/ControlPanel.tsx`: Play / Pause / Stop / BPM controls 追加。
+- `src/components/ControlPanel.tsx`: Play / Pause / Stop / Speed controls 追加。
 - `src/components/ScoreDisplay.tsx`: playback column highlight、drag range preview、範囲確定 callback。
 - `src/utils/osmdCoordinates.ts`: score column と playback timeline の対応。
 - `src/types/piano.ts`: playback timeline / state type の追加。

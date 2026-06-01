@@ -81,12 +81,12 @@ Status as of 2026-05-24 06:45 UTC: `NoteDetail` / `PlaybackNoteEvent` へ `noteI
    - **Fix direction**: committed range projection が空になったら parent へ invalid/cancel event を返す。長期的には stable lane/time identity から再投影する。
    - **Status**: Implemented as stop-on-invalid-projection. Stable lane/time identity からの再投影は未対応。
 
-6. **P1: `scoreBpm` が user setting に逆流している**
-   - **Evidence**: `handlePlaybackTimelineReady()` の `updateSetting('playbackBpm', timeline.scoreBpm)`。
-   - **Problem**: score metadata default と user BPM override が `settings.playbackBpm` に統合され、どちらが正本か分からない。
-   - **Failure mode**: ユーザーが BPM を変えても、resize や timeline rebuild で score BPM が再適用される。
-   - **Fix direction**: `scoreDefaultBpm` と `userPlaybackBpmOverride` を分離する。score BPM は score load 時の初期値としてだけ使う。
-   - **Status**: Partially implemented. score data ごとに一度だけ `scoreBpm` を適用する。明示的な `userPlaybackBpmOverride` 型は未対応。
+6. **P1: score tempo と user speed control の正本分離**
+   - **Evidence**: `PlaybackTimeline.tempoEvents` と `settings.playbackSpeedMultiplier`。
+   - **Problem**: score tempo と user control を同じ setting に統合すると、どちらが正本か分からない。
+   - **Failure mode**: 譜面再抽出と user 操作が同じ値を上書きし合い、再生速度の由来が追跡できなくなる。
+   - **Fix direction**: score tempo は timeline、user control は速度倍率として分離する。
+   - **Status**: Implemented. BPM 直接指定を廃止し、譜面の `tempoEvents` と `settings.playbackSpeedMultiplier` を分離した。
 
 7. **P2: Notehead DOM mutation が visual state の正本を隠している**
    - **Evidence**: `ScoreDisplay` の note color effect。

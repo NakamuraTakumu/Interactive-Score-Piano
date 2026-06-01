@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { isScoreDrawingParameters, PianoSettings, SoundType } from '../types/piano';
 import { DEFAULT_SOUND_FONT_ID } from '../data/soundFonts';
+import { normalizePlaybackSpeedMultiplier, PLAYBACK_SPEED_DEFAULT } from '../utils/playbackTempo';
 
 const DEFAULT_SETTINGS: PianoSettings = {
   showAllLines: false,
@@ -19,7 +20,7 @@ const DEFAULT_SETTINGS: PianoSettings = {
   velocitySensitivity: 1,
   highlightBlackKeys: true,
   scoreDrawingParameters: 'compact',
-  playbackBpm: 100,
+  playbackSpeedMultiplier: PLAYBACK_SPEED_DEFAULT,
   playbackLoop: false
 };
 
@@ -29,11 +30,13 @@ export const usePianoSettings = () => {
     if (saved) {
       try {
         const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        delete (parsed as typeof parsed & { playbackBpm?: unknown }).playbackBpm;
         return {
           ...parsed,
           scoreDrawingParameters: isScoreDrawingParameters(parsed.scoreDrawingParameters)
             ? parsed.scoreDrawingParameters
             : DEFAULT_SETTINGS.scoreDrawingParameters,
+          playbackSpeedMultiplier: normalizePlaybackSpeedMultiplier(parsed.playbackSpeedMultiplier),
         };
       } catch (e) {
         return DEFAULT_SETTINGS;
@@ -43,7 +46,12 @@ export const usePianoSettings = () => {
   });
 
   const updateSetting = useCallback(<K extends keyof PianoSettings>(key: K, value: PianoSettings[K]) => {
-    setSettings(prev => Object.is(prev[key], value) ? prev : { ...prev, [key]: value });
+    setSettings(prev => {
+      const nextValue = key === 'playbackSpeedMultiplier'
+        ? normalizePlaybackSpeedMultiplier(value)
+        : value;
+      return Object.is(prev[key], nextValue) ? prev : { ...prev, [key]: nextValue };
+    });
   }, []);
 
   const resetSettings = useCallback(() => {

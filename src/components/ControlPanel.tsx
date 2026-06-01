@@ -21,6 +21,7 @@ import { SCORE_DRAWING_PARAMETER_VALUES, SavedScore, PianoSettings, PlaybackStat
 import { MidiDevice } from '../hooks/useMidi';
 import { GM_INSTRUMENTS } from '../data/gmInstruments';
 import { SoundFontOption } from '../data/soundFonts';
+import { PLAYBACK_SPEED_MAX, PLAYBACK_SPEED_MIN, PLAYBACK_SPEED_STEP } from '../utils/playbackTempo';
 
 const SCORE_DRAWING_PARAMETER_LABELS: Record<ScoreDrawingParameters, string> = {
   default: 'Default',
@@ -52,6 +53,7 @@ interface ControlPanelProps {
   playbackStatus: PlaybackStatus;
   canPlayback: boolean;
   playbackError?: string | null;
+  playbackTempoLabel?: string | null;
   onTogglePlayback: () => void | Promise<void>;
   onStopPlayback: () => void;
 }
@@ -80,6 +82,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   playbackStatus,
   canPlayback,
   playbackError = null,
+  playbackTempoLabel = null,
   onTogglePlayback,
   onStopPlayback
 }) => {
@@ -228,7 +231,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         </Box>
         
         <Stack direction="row" spacing={3} alignItems="center">
-          <Stack spacing={0.5} sx={{ width: 250 }}>
+          <Stack spacing={0.5} sx={{ width: 280 }}>
             <Stack direction="row" spacing={1} alignItems="center">
               <Button
                 size="small"
@@ -265,20 +268,30 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               </Typography>
             </Stack>
             <Stack direction="row" spacing={1} alignItems="center">
-              <Typography variant="caption" color="text.secondary" sx={{ width: 32 }}>
-                BPM
+              <Typography variant="caption" color="text.secondary" sx={{ width: 42 }}>
+                Speed
               </Typography>
               <Slider
                 size="small"
-                value={localSettings.playbackBpm}
-                onChange={handleSliderChange('playbackBpm')}
-                onChangeCommitted={handleSliderCommit('playbackBpm')}
-                min={40}
-                max={200}
-                step={1}
+                value={localSettings.playbackSpeedMultiplier}
+                onChange={handleSliderChange('playbackSpeedMultiplier')}
+                onChangeCommitted={handleSliderCommit('playbackSpeedMultiplier')}
+                min={PLAYBACK_SPEED_MIN}
+                max={PLAYBACK_SPEED_MAX}
+                step={PLAYBACK_SPEED_STEP}
                 valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${Number(value).toFixed(2)}x`}
+                data-testid="playback-speed-slider"
               />
             </Stack>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              data-testid="playback-tempo-label"
+              sx={{ lineHeight: 1.2 }}
+            >
+              {`${localSettings.playbackSpeedMultiplier.toFixed(2)}x / Score: ${playbackTempoLabel ?? '100 BPM'}`}
+            </Typography>
             {playbackError && (
               <Typography variant="caption" color="error" sx={{ lineHeight: 1.2 }}>
                 {playbackError}

@@ -79,6 +79,7 @@ const assertSampleTieTimeline = async (page) => {
         midi: event.sourceMidi,
         tick: event.tick,
         durationTicks: event.durationTicks ?? null,
+        noteIdentities: event.noteIdentities ?? [event.noteIdentity],
       }));
   });
 
@@ -89,6 +90,135 @@ const assertSampleTieTimeline = async (page) => {
   }
   if (tiedCNoteOns[0].durationTicks !== tiedCNoteOffs[0].tick - tiedCNoteOns[0].tick) {
     throw new Error(`Expected tied C duration to reach its merged note-off. events=${JSON.stringify(measureTwoEvents)}`);
+  }
+  if (tiedCNoteOns[0].noteIdentities.length !== 2 || tiedCNoteOffs[0].noteIdentities.length !== 2) {
+    throw new Error(`Expected sample tied C playback events to highlight both tied noteheads. events=${JSON.stringify(measureTwoEvents)}`);
+  }
+};
+
+const tempoChangeMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>60</per-minute></metronome></direction-type><sound tempo="60"/></direction>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+    <measure number="2">
+      <direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>120</per-minute></metronome></direction-type><sound tempo="120"/></direction>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+const noTempoMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+const lateSingleTempoMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>145</per-minute></metronome></direction-type><sound tempo="145"/></direction>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+const assertTempoMapTimeline = async (page) => {
+  const result = await page.evaluate(async ({ tempoChangeMusicXML, noTempoMusicXML, lateSingleTempoMusicXML }) => {
+    const transformedUtils = await fetch('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts').then((response) => response.text());
+    const osmdImport = transformedUtils.match(/from\s+["']([^"']*opensheetmusicdisplay[^"']*)["']/)?.[1];
+    if (!osmdImport) throw new Error('Could not resolve transformed OSMD import path.');
+
+    const osmdModule = await import(osmdImport);
+    const OpenSheetMusicDisplay = osmdModule.OpenSheetMusicDisplay ?? osmdModule.default?.OpenSheetMusicDisplay;
+    const {
+      extractMeasureContexts,
+      extractPlaybackTimeline,
+      extractSourceNoteMidiMap,
+      getPixelPerUnit,
+    } = await import('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts');
+    const { advanceTickByElapsedMs, formatTempoLabel } = await import('/Interactive-Score-Piano/src/utils/playbackTempo.ts');
+
+    const buildTimeline = async (xml) => {
+      const host = document.createElement('div');
+      host.style.width = '1200px';
+      document.body.appendChild(host);
+      const osmd = new OpenSheetMusicDisplay(host, {
+        backend: 'svg',
+        drawTitle: false,
+        drawPartNames: false,
+        drawSlurs: true,
+        drawingParameters: 'compact',
+      });
+      await osmd.load(xml);
+      osmd.render();
+      const pixelPerUnit = getPixelPerUnit(osmd, host);
+      const contexts = extractMeasureContexts(osmd, pixelPerUnit);
+      const timeline = extractPlaybackTimeline(osmd, contexts, extractSourceNoteMidiMap(osmd));
+      host.remove();
+      return timeline;
+    };
+
+    const tempoTimeline = await buildTimeline(tempoChangeMusicXML);
+    const noTempoTimeline = await buildTimeline(noTempoMusicXML);
+    const lateSingleTempoTimeline = await buildTimeline(lateSingleTempoMusicXML);
+    return {
+      tempoEvents: tempoTimeline.tempoEvents,
+      noTempoEvents: noTempoTimeline.tempoEvents,
+      lateSingleTempoEvents: lateSingleTempoTimeline.tempoEvents,
+      lateSingleTempoLabel: formatTempoLabel(lateSingleTempoTimeline.tempoEvents),
+      tempoLabel: formatTempoLabel(tempoTimeline.tempoEvents),
+      tickAt2500Ms: advanceTickByElapsedMs(0, 2500, tempoTimeline.tempoEvents, tempoTimeline.ppq, 1),
+      tickAt2500MsDoubleSpeed: advanceTickByElapsedMs(0, 2500, tempoTimeline.tempoEvents, tempoTimeline.ppq, 2),
+    };
+  }, { tempoChangeMusicXML, noTempoMusicXML, lateSingleTempoMusicXML });
+
+  const firstTempo = result.tempoEvents.find((event) => event.tick === 0);
+  const secondTempo = result.tempoEvents.find((event) => event.tick === 1920);
+  if (!firstTempo || firstTempo.bpm !== 60 || !secondTempo || secondTempo.bpm !== 120) {
+    throw new Error(`Expected tempo map 0=>60 and 1920=>120. result=${JSON.stringify(result)}`);
+  }
+  if (result.noTempoEvents.length !== 1 || result.noTempoEvents[0].tick !== 0 || result.noTempoEvents[0].bpm !== 100) {
+    throw new Error(`Expected no-tempo score to fall back to 100 BPM. result=${JSON.stringify(result)}`);
+  }
+  if (!result.lateSingleTempoEvents.some((event) => event.tick === 0 && event.bpm === 145) || result.lateSingleTempoLabel !== '145 BPM') {
+    throw new Error(`Expected single detected 145 BPM tempo to be normalized to score start without 100 BPM fallback. result=${JSON.stringify(result)}`);
+  }
+  if (result.tempoLabel !== '60-120 BPM') {
+    throw new Error(`Expected tempo range label. result=${JSON.stringify(result)}`);
+  }
+  if (Math.abs(result.tickAt2500Ms - 1200) > 2) {
+    throw new Error(`Expected 2500ms at 1x to advance to about tick 1200. result=${JSON.stringify(result)}`);
+  }
+  if (Math.abs(result.tickAt2500MsDoubleSpeed - 2880) > 2) {
+    throw new Error(`Expected 2500ms at 2x to advance through the tempo change to about tick 2880. result=${JSON.stringify(result)}`);
   }
 };
 
@@ -255,6 +385,18 @@ const waitForScore = async (page) => {
   await waitForScore(page);
   await page.waitForTimeout(1200);
   await assertSampleTieTimeline(page);
+  await assertTempoMapTimeline(page);
+  await page.getByTestId('playback-speed-slider').waitFor({ timeout: 5000 });
+  const tempoLabelText = await page.getByTestId('playback-tempo-label').innerText();
+  if (!tempoLabelText.includes('Score:')) {
+    throw new Error(`Expected read-only score tempo label. label=${tempoLabelText}`);
+  }
+  if (!tempoLabelText.includes('60-120 BPM')) {
+    throw new Error(`Expected default sample to expose its 60-120 BPM tempo range. label=${tempoLabelText}`);
+  }
+  if (await page.getByText('BPM', { exact: true }).count() > 0) {
+    throw new Error('Expected BPM control label to be removed.');
+  }
 
   const points = await getScoreDragPoints(page);
   const { duringRange, afterRange } = await dragScoreRange(page, points);
