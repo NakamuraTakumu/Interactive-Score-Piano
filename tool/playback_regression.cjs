@@ -150,6 +150,46 @@ const lateSingleTempoMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
   </part>
 </score-partwise>`;
 
+const fermataMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>60</per-minute></metronome></direction-type><sound tempo="60"/></direction>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><notations><fermata type="upright">normal</fermata></notations></note>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+    <measure number="2">
+      <direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>120</per-minute></metronome></direction-type><sound tempo="120"/></direction>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+const graceArpeggioMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>4</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <note><grace slash="yes"/><pitch><step>D</step><octave>4</octave></pitch><type>eighth</type></note>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>quarter</type></note>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>8</duration><type>half</type><notations><arpeggiate direction="up"/></notations></note>
+      <note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>8</duration><type>half</type><notations><arpeggiate direction="up"/></notations></note>
+      <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>8</duration><type>half</type><notations><arpeggiate direction="up"/></notations></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
 const assertTempoMapTimeline = async (page) => {
   const result = await page.evaluate(async ({ tempoChangeMusicXML, noTempoMusicXML, lateSingleTempoMusicXML }) => {
     const transformedUtils = await fetch('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts').then((response) => response.text());
@@ -219,6 +259,173 @@ const assertTempoMapTimeline = async (page) => {
   }
   if (Math.abs(result.tickAt2500MsDoubleSpeed - 2880) > 2) {
     throw new Error(`Expected 2500ms at 2x to advance through the tempo change to about tick 2880. result=${JSON.stringify(result)}`);
+  }
+};
+
+const assertFermataTimeline = async (page) => {
+  const result = await page.evaluate(async ({ fermataMusicXML, noTempoMusicXML }) => {
+    const transformedUtils = await fetch('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts').then((response) => response.text());
+    const osmdImport = transformedUtils.match(/from\s+["']([^"']*opensheetmusicdisplay[^"']*)["']/)?.[1];
+    if (!osmdImport) throw new Error('Could not resolve transformed OSMD import path.');
+
+    const osmdModule = await import(osmdImport);
+    const OpenSheetMusicDisplay = osmdModule.OpenSheetMusicDisplay ?? osmdModule.default?.OpenSheetMusicDisplay;
+    const { sampleMusicXML } = await import('/Interactive-Score-Piano/src/data/sampleScores.ts');
+    const {
+      extractMeasureContexts,
+      extractPlaybackTimeline,
+      extractSourceNoteMidiMap,
+      getPixelPerUnit,
+    } = await import('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts');
+
+    const buildTimeline = async (xml) => {
+      const host = document.createElement('div');
+      host.style.width = '1200px';
+      document.body.appendChild(host);
+      const osmd = new OpenSheetMusicDisplay(host, {
+        backend: 'svg',
+        drawTitle: false,
+        drawPartNames: false,
+        drawSlurs: true,
+        drawingParameters: 'compact',
+      });
+      await osmd.load(xml);
+      osmd.render();
+      const pixelPerUnit = getPixelPerUnit(osmd, host);
+      const contexts = extractMeasureContexts(osmd, pixelPerUnit);
+      const timeline = extractPlaybackTimeline(osmd, contexts, extractSourceNoteMidiMap(osmd));
+      host.remove();
+      return timeline;
+    };
+
+    const summarizeEvents = (timeline, measureNumber = null) => timeline.events
+      .filter((event) => measureNumber === null || event.measureNumber === measureNumber)
+      .map((event) => ({
+        type: event.type,
+        midi: event.sourceMidi,
+        tick: event.tick,
+        durationTicks: event.durationTicks ?? null,
+      }));
+
+    const fermataTimeline = await buildTimeline(fermataMusicXML);
+    const noFermataTimeline = await buildTimeline(noTempoMusicXML);
+    const sampleTimeline = await buildTimeline(sampleMusicXML);
+
+    return {
+      fermataEvents: summarizeEvents(fermataTimeline),
+      fermataTempoEvents: fermataTimeline.tempoEvents,
+      fermataDurationTicks: fermataTimeline.durationTicks,
+      noFermataEvents: summarizeEvents(noFermataTimeline),
+      sampleMeasureNineEvents: summarizeEvents(sampleTimeline, 9),
+    };
+  }, { fermataMusicXML, noTempoMusicXML });
+
+  const cOn = result.fermataEvents.find((event) => event.type === 'note-on' && event.midi === 60);
+  const cOff = result.fermataEvents.find((event) => event.type === 'note-off' && event.midi === 60);
+  const dOn = result.fermataEvents.find((event) => event.type === 'note-on' && event.midi === 62);
+  const shiftedTempo = result.fermataTempoEvents.find((event) => event.bpm === 120);
+  if (!cOn || !cOff || cOn.tick !== 0 || cOff.tick !== 720 || cOn.durationTicks !== 720) {
+    throw new Error(`Expected fermata C quarter to last 720 ticks. result=${JSON.stringify(result)}`);
+  }
+  if (!dOn || dOn.tick !== 720) {
+    throw new Error(`Expected following D note-on to shift to tick 720. result=${JSON.stringify(result)}`);
+  }
+  if (!shiftedTempo || shiftedTempo.tick !== 2160) {
+    throw new Error(`Expected tempo event after fermata boundary to shift to tick 2160. result=${JSON.stringify(result)}`);
+  }
+  const plainCOff = result.noFermataEvents.find((event) => event.type === 'note-off' && event.midi === 60);
+  const plainDOn = result.noFermataEvents.find((event) => event.type === 'note-on' && event.midi === 62);
+  if (!plainCOff || plainCOff.tick !== 480 || !plainDOn || plainDOn.tick !== 480) {
+    throw new Error(`Expected non-fermata score timeline to remain unwarped. result=${JSON.stringify(result)}`);
+  }
+  const sampleCOn = result.sampleMeasureNineEvents.find((event) => event.type === 'note-on' && event.midi === 60);
+  const sampleCOff = result.sampleMeasureNineEvents.find((event) => event.type === 'note-off' && event.midi === 60);
+  const sampleDOn = result.sampleMeasureNineEvents.find((event) => event.type === 'note-on' && event.midi === 62);
+  if (!sampleCOn || !sampleCOff || !sampleDOn || sampleCOff.tick - sampleCOn.tick !== 720 || sampleDOn.tick - sampleCOn.tick !== 720) {
+    throw new Error(`Expected sample measure 9 to expose fermata playback timing. result=${JSON.stringify(result)}`);
+  }
+};
+
+const assertGraceArpeggioTimeline = async (page) => {
+  const result = await page.evaluate(async ({ graceArpeggioMusicXML }) => {
+    const transformedUtils = await fetch('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts').then((response) => response.text());
+    const osmdImport = transformedUtils.match(/from\s+["']([^"']*opensheetmusicdisplay[^"']*)["']/)?.[1];
+    if (!osmdImport) throw new Error('Could not resolve transformed OSMD import path.');
+
+    const osmdModule = await import(osmdImport);
+    const OpenSheetMusicDisplay = osmdModule.OpenSheetMusicDisplay ?? osmdModule.default?.OpenSheetMusicDisplay;
+    const { sampleMusicXML } = await import('/Interactive-Score-Piano/src/data/sampleScores.ts');
+    const {
+      extractMeasureContexts,
+      extractPlaybackTimeline,
+      extractSourceNoteMidiMap,
+      getPixelPerUnit,
+    } = await import('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts');
+
+    const buildTimeline = async (xml) => {
+      const host = document.createElement('div');
+      host.style.width = '1200px';
+      document.body.appendChild(host);
+      const osmd = new OpenSheetMusicDisplay(host, {
+        backend: 'svg',
+        drawTitle: false,
+        drawPartNames: false,
+        drawSlurs: true,
+        drawingParameters: 'compact',
+      });
+      await osmd.load(xml);
+      osmd.render();
+      const pixelPerUnit = getPixelPerUnit(osmd, host);
+      const contexts = extractMeasureContexts(osmd, pixelPerUnit);
+      const timeline = extractPlaybackTimeline(osmd, contexts, extractSourceNoteMidiMap(osmd));
+      host.remove();
+      return timeline;
+    };
+
+    const summarizeEvents = (timeline, measureNumber = null) => timeline.events
+      .filter((event) => measureNumber === null || event.measureNumber === measureNumber)
+      .map((event) => ({
+        type: event.type,
+        midi: event.sourceMidi,
+        tick: event.tick,
+        durationTicks: event.durationTicks ?? null,
+      }));
+
+    const graceArpeggioTimeline = await buildTimeline(graceArpeggioMusicXML);
+    const sampleTimeline = await buildTimeline(sampleMusicXML);
+    return {
+      graceArpeggioEvents: summarizeEvents(graceArpeggioTimeline),
+      graceArpeggioDurationTicks: graceArpeggioTimeline.durationTicks,
+      sampleMeasureTenEvents: summarizeEvents(sampleTimeline, 10),
+    };
+  }, { graceArpeggioMusicXML });
+
+  const noteOns = result.graceArpeggioEvents.filter((event) => event.type === 'note-on');
+  const graceD = noteOns.find((event) => event.midi === 62 && event.durationTicks === 60);
+  const mainC = noteOns.find((event) => event.midi === 60 && event.durationTicks === 480);
+  const followingD = noteOns.find((event) => event.midi === 62 && event.durationTicks === 480);
+  const arpeggioNoteOns = noteOns.filter((event) => [60, 64, 67].includes(event.midi) && (event.durationTicks ?? 0) > 900);
+  if (!graceD || graceD.tick !== 0 || !mainC || mainC.tick !== 60 || !followingD || followingD.tick !== 540) {
+    throw new Error(`Expected score-start grace note to play before the main note and shift following notes. result=${JSON.stringify(result)}`);
+  }
+  const arpeggioTicksByMidi = new Map(arpeggioNoteOns.map((event) => [event.midi, event.tick]));
+  if (arpeggioTicksByMidi.get(60) !== 1020 || arpeggioTicksByMidi.get(64) !== 1040 || arpeggioTicksByMidi.get(67) !== 1060) {
+    throw new Error(`Expected upward arpeggio note-ons to roll in 20-tick steps. result=${JSON.stringify(result)}`);
+  }
+  if (result.graceArpeggioDurationTicks !== 1980) {
+    throw new Error(`Expected grace insertion to extend synthetic timeline to 1980 ticks. result=${JSON.stringify(result)}`);
+  }
+
+  const sampleNoteOns = result.sampleMeasureTenEvents.filter((event) => event.type === 'note-on');
+  const sampleGrace = sampleNoteOns.find((event) => event.midi === 62 && event.durationTicks === 60);
+  const sampleMainC = sampleNoteOns.find((event) => event.midi === 60 && event.durationTicks === 480);
+  const sampleArpeggioNoteOns = sampleNoteOns.filter((event) => [60, 64, 67].includes(event.midi) && (event.durationTicks ?? 0) > 900);
+  if (!sampleGrace || !sampleMainC || sampleMainC.tick - sampleGrace.tick !== 60) {
+    throw new Error(`Expected sample measure 10 to expose grace-note playback timing. result=${JSON.stringify(result)}`);
+  }
+  const sampleArpeggioTicks = sampleArpeggioNoteOns.map((event) => event.tick).sort((left, right) => left - right);
+  if (sampleArpeggioTicks.length !== 3 || sampleArpeggioTicks[1] - sampleArpeggioTicks[0] !== 20 || sampleArpeggioTicks[2] - sampleArpeggioTicks[1] !== 20) {
+    throw new Error(`Expected sample measure 10 to expose arpeggio playback timing. result=${JSON.stringify(result)}`);
   }
 };
 
@@ -418,6 +625,8 @@ const assertScoreLayoutIsGlobal = async (page) => {
   await page.waitForTimeout(1200);
   await assertSampleTieTimeline(page);
   await assertTempoMapTimeline(page);
+  await assertFermataTimeline(page);
+  await assertGraceArpeggioTimeline(page);
   await page.getByTestId('playback-speed-slider').waitFor({ timeout: 5000 });
   const tempoLabelText = await page.getByTestId('playback-tempo-label').innerText();
   if (!tempoLabelText.includes('Score:')) {

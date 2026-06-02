@@ -3,6 +3,24 @@ import { ColumnDetail, MeasureContext, ClefType, NoteDetail, PlaybackNoteEvent, 
 import { FALLBACK_SCORE_BPM } from './playbackTempo';
 
 const PLAYBACK_PPQ = 480;
+const OSMD_FERMATA_ARTICULATION_ENUM = 10;
+const FERMATA_DURATION_MULTIPLIER = 1.5;
+const GRACE_NOTE_DURATION_TICKS = PLAYBACK_PPQ / 8;
+const ARPEGGIO_STEP_TICKS = PLAYBACK_PPQ / 24;
+const OSMD_ARPEGGIO_TYPE_DOWN = 3;
+
+type TimelineWarpPoint = {
+  boundaryTick: number;
+  extraTicks: number;
+};
+
+type PlaybackEventMetadata = {
+  isGraceNote: boolean;
+  graceAnchorTick?: number;
+  graceGroupKey?: string;
+  arpeggioGroupKey?: string;
+  arpeggioDirection?: 'up' | 'down';
+};
 
 const fractionToTicks = (fraction: any, ppq: number = PLAYBACK_PPQ): number | null => {
   if (!fraction) return null;
@@ -46,9 +64,16 @@ const getSourceNoteDurationTicks = (sourceNote: any): number | null => {
 const shouldSkipPlaybackNote = (sourceNote: any): boolean => {
   if (!sourceNote) return true;
   if (typeof sourceNote.isRest === 'function' && sourceNote.isRest()) return true;
-  if (sourceNote.IsGraceNote || sourceNote.IsCueNote || sourceNote.PrintObject === false) return true;
+  if (sourceNote.IsCueNote || sourceNote.PrintObject === false) return true;
   return false;
 };
+
+const isGraceNote = (sourceNote: any): boolean => Boolean(
+  sourceNote?.IsGraceNote ||
+  sourceNote?.isGraceNote ||
+  sourceNote?.ParentVoiceEntry?.isGrace ||
+  sourceNote?.ParentVoiceEntry?.IsGrace
+);
 
 const getArticulationEnums = (sourceNote: any): Set<number> => {
   const articulations = sourceNote?.ParentVoiceEntry?.Articulations ?? [];
@@ -84,6 +109,16 @@ const getPlaybackModifiers = (sourceNote: any): { durationMultiplier: number; ve
   return { durationMultiplier, velocityRatio };
 };
 
+const getFermataArticulationEnum = (): number => {
+  const articulationEnum = ArticulationEnum as unknown as Record<string, unknown>;
+  const namedValue = articulationEnum.fermata ?? articulationEnum.Fermata;
+  return typeof namedValue === 'number' ? namedValue : OSMD_FERMATA_ARTICULATION_ENUM;
+};
+
+const hasFermata = (sourceNote: any): boolean => {
+  return getArticulationEnums(sourceNote).has(getFermataArticulationEnum());
+};
+
 const getTieGroupNotes = (sourceNote: any): any[] => {
   const tieNotes = sourceNote?.NoteTie?.notes;
   if (!Array.isArray(tieNotes) || tieNotes.length <= 1) return [sourceNote];
@@ -98,6 +133,165 @@ const getSourceNoteStartTicks = (sourceNote: any, fallbackTicks: number): number
 
 const getSourceNoteMidi = (sourceNote: any): number | null => {
   return sourceNote?.Pitch ? sourceNote.Pitch.getHalfTone() + 12 : null;
+};
+
+const getArpeggio = (sourceNote: any): any | null => {
+  return sourceNote?.arpeggio ?? sourceNote?.Arpeggio ?? sourceNote?.ParentVoiceEntry?.arpeggio ?? null;
+};
+
+const getArpeggioDirection = (arpeggio: any): 'up' | 'down' => (
+  arpeggio?.type === OSMD_ARPEGGIO_TYPE_DOWN ? 'down' : 'up'
+);
+
+const getArpeggioGroupKey = (sourceNote: any, startTicks: number, staffId: number, voiceId: number): string | undefined => {
+  const arpeggio = getArpeggio(sourceNote);
+  if (!arpeggio) return undefined;
+  const arpeggioNotes = Array.isArray(arpeggio.notes) ? arpeggio.notes : [];
+  const midiSignature = arpeggioNotes
+    .map((note: any) => getSourceNoteMidi(note))
+    .filter((midi: number | null): midi is number => midi !== null)
+    .sort((left: number, right: number) => left - right)
+    .join(',');
+  return ['arpeggio', startTicks, staffId, voiceId, midiSignature].join(':');
+};
+
+const applyTimelineWarp = <T extends { tick: number }>(items: T[], warpPoints: TimelineWarpPoint[]): T[] => {
+  if (warpPoints.length === 0) return items;
+
+  const sortedWarpPoints = [...warpPoints].sort((left, right) => left.boundaryTick - right.boundaryTick);
+  return items.map((item) => {
+    const offset = sortedWarpPoints.reduce((sum, warpPoint) => (
+      item.tick >= warpPoint.boundaryTick ? sum + warpPoint.extraTicks : sum
+    ), 0);
+    return offset === 0 ? item : { ...item, tick: item.tick + offset };
+  });
+};
+
+const applyWarpToTick = (tick: number, warpPoints: TimelineWarpPoint[]): number => {
+  if (warpPoints.length === 0) return tick;
+  return warpPoints.reduce((warpedTick, warpPoint) => (
+    tick >= warpPoint.boundaryTick ? warpedTick + warpPoint.extraTicks : warpedTick
+  ), tick);
+};
+
+const getNoteOffEventId = (noteOnEventId: string): string => noteOnEventId.replace(/-on$/, '-off');
+
+const applyGraceNoteTiming = (
+  events: PlaybackNoteEvent[],
+  metadataByEventId: Map<string, PlaybackEventMetadata>
+): PlaybackNoteEvent[] => {
+  const graceGroups = new Map<string, PlaybackNoteEvent[]>();
+
+  events.forEach((event) => {
+    const metadata = metadataByEventId.get(event.id);
+    if (event.type !== 'note-on' || !metadata?.isGraceNote || !metadata.graceGroupKey) return;
+    const group = graceGroups.get(metadata.graceGroupKey) ?? [];
+    group.push(event);
+    graceGroups.set(metadata.graceGroupKey, group);
+  });
+
+  if (graceGroups.size === 0) return events;
+
+  const adjustedTicksByEventId = new Map<string, number>();
+  const insertionPoints = new Map<number, number>();
+
+  graceGroups.forEach((group) => {
+    const sortedGroup = [...group].sort((left, right) => left.id.localeCompare(right.id));
+    const anchorTick = Math.min(...sortedGroup.map((event) => event.tick));
+    const requestedLeadTicks = sortedGroup.length * GRACE_NOTE_DURATION_TICKS;
+    const startBaseTick = Math.max(0, anchorTick - requestedLeadTicks);
+    const insertedTicks = Math.max(0, requestedLeadTicks - anchorTick);
+    if (insertedTicks > 0) {
+      insertionPoints.set(anchorTick, Math.max(insertionPoints.get(anchorTick) ?? 0, insertedTicks));
+    }
+
+    sortedGroup.forEach((event, index) => {
+      const noteOnTick = startBaseTick + index * GRACE_NOTE_DURATION_TICKS;
+      adjustedTicksByEventId.set(event.id, noteOnTick);
+      adjustedTicksByEventId.set(getNoteOffEventId(event.id), noteOnTick + GRACE_NOTE_DURATION_TICKS);
+    });
+  });
+
+  const sortedInsertionPoints = Array.from(insertionPoints.entries())
+    .map(([boundaryTick, extraTicks]) => ({ boundaryTick, extraTicks }))
+    .sort((left, right) => left.boundaryTick - right.boundaryTick);
+
+  const getInsertionOffset = (event: PlaybackNoteEvent): number => {
+    const metadata = metadataByEventId.get(event.id);
+    const graceAnchorTick = metadata?.graceAnchorTick ?? null;
+    return sortedInsertionPoints.reduce((offset, insertionPoint) => {
+      if (metadata?.isGraceNote) {
+        return graceAnchorTick !== null && insertionPoint.boundaryTick < graceAnchorTick
+          ? offset + insertionPoint.extraTicks
+          : offset;
+      }
+      return event.tick >= insertionPoint.boundaryTick
+        ? offset + insertionPoint.extraTicks
+        : offset;
+    }, 0);
+  };
+
+  return events.map((event) => {
+    const adjustedTick = adjustedTicksByEventId.get(event.id);
+    if (adjustedTick !== undefined) {
+      const offset = getInsertionOffset(event);
+      return { ...event, tick: adjustedTick + offset };
+    }
+    const offset = getInsertionOffset(event);
+    return offset === 0 ? event : { ...event, tick: event.tick + offset };
+  });
+};
+
+const applyArpeggioTiming = (
+  events: PlaybackNoteEvent[],
+  metadataByEventId: Map<string, PlaybackEventMetadata>
+): PlaybackNoteEvent[] => {
+  const arpeggioGroups = new Map<string, PlaybackNoteEvent[]>();
+
+  events.forEach((event) => {
+    const metadata = metadataByEventId.get(event.id);
+    if (event.type !== 'note-on' || metadata?.isGraceNote || !metadata?.arpeggioGroupKey) return;
+    const group = arpeggioGroups.get(metadata.arpeggioGroupKey) ?? [];
+    group.push(event);
+    arpeggioGroups.set(metadata.arpeggioGroupKey, group);
+  });
+
+  if (arpeggioGroups.size === 0) return events;
+
+  const eventTicksById = new Map(events.map((event) => [event.id, event.tick]));
+  const adjustedNoteOnTicksByEventId = new Map<string, number>();
+
+  arpeggioGroups.forEach((group) => {
+    const direction = metadataByEventId.get(group[0]?.id)?.arpeggioDirection ?? 'up';
+    const sortedGroup = [...group].sort((left, right) => {
+      const midiOrder = direction === 'down'
+        ? right.sourceMidi - left.sourceMidi
+        : left.sourceMidi - right.sourceMidi;
+      return midiOrder !== 0 ? midiOrder : left.id.localeCompare(right.id);
+    });
+
+    sortedGroup.forEach((event, index) => {
+      const noteOffTick = eventTicksById.get(getNoteOffEventId(event.id)) ?? event.tick;
+      const maxOffsetTicks = Math.max(0, noteOffTick - event.tick - 1);
+      const offsetTicks = Math.min(index * ARPEGGIO_STEP_TICKS, maxOffsetTicks);
+      if (offsetTicks > 0) adjustedNoteOnTicksByEventId.set(event.id, event.tick + offsetTicks);
+    });
+  });
+
+  return events.map((event) => {
+    const adjustedTick = adjustedNoteOnTicksByEventId.get(event.id);
+    return adjustedTick === undefined ? event : { ...event, tick: adjustedTick };
+  });
+};
+
+const updateWarpedNoteDurations = (events: PlaybackNoteEvent[]): PlaybackNoteEvent[] => {
+  const eventTicksById = new Map(events.map((event) => [event.id, event.tick]));
+  return events.map((event) => {
+    if (event.type !== 'note-on' || event.durationTicks === undefined) return event;
+    const noteOffTick = eventTicksById.get(getNoteOffEventId(event.id));
+    if (noteOffTick === undefined) return event;
+    return { ...event, durationTicks: Math.max(1, noteOffTick - event.tick) };
+  });
 };
 
 export type SourceNoteMidiMap = Map<any, number>;
@@ -386,6 +580,8 @@ export const extractPlaybackTimeline = (
   sourceNoteMidiMap: SourceNoteMidiMap = extractSourceNoteMidiMap(osmd)
 ): PlaybackTimeline => {
   const events: PlaybackNoteEvent[] = [];
+  const metadataByEventId = new Map<string, PlaybackEventMetadata>();
+  const warpPointsByBoundaryTick = new Map<number, TimelineWarpPoint>();
   let durationTicks = 0;
   const sourceNoteMap = new Map<any, { ctx: MeasureContext; detail: NoteDetail }>();
 
@@ -420,10 +616,13 @@ export const extractPlaybackTimeline = (
           voiceEntry?.Notes?.forEach((sourceNote: any, noteIndex: number) => {
             if (shouldSkipPlaybackNote(sourceNote)) return;
 
-            const noteDurationTicks = getSourceNoteDurationTicks(sourceNote);
+            const sourceIsGraceNote = isGraceNote(sourceNote);
+            const noteDurationTicks = sourceIsGraceNote
+              ? GRACE_NOTE_DURATION_TICKS
+              : getSourceNoteDurationTicks(sourceNote);
             if (noteDurationTicks === null) return;
 
-            const tieGroupNotes = getTieGroupNotes(sourceNote);
+            const tieGroupNotes = sourceIsGraceNote ? [sourceNote] : getTieGroupNotes(sourceNote);
             if (tieGroupNotes.length > 1 && tieGroupNotes[0] !== sourceNote) return;
 
             const mapped = sourceNoteMap.get(sourceNote);
@@ -435,14 +634,19 @@ export const extractPlaybackTimeline = (
             const systemId = mapped?.ctx.systemId ?? 0;
             const staffId = mapped?.ctx.staffId ?? sourceNote.ParentStaff?.idInMusicSheet ?? staffIndex;
             const playbackModifiers = getPlaybackModifiers(sourceNote);
-            const tiedEndTicks = tieGroupNotes.reduce((endTick, tiedNote) => {
-              const tiedNoteDurationTicks = getSourceNoteDurationTicks(tiedNote);
-              if (tiedNoteDurationTicks === null) return endTick;
-              const tiedNoteStartTicks = getSourceNoteStartTicks(tiedNote, startTicks);
-              return Math.max(endTick, tiedNoteStartTicks + tiedNoteDurationTicks);
-            }, startTicks + noteDurationTicks);
+            const sourceHasFermata = !sourceIsGraceNote && tieGroupNotes.some((note) => hasFermata(note));
+            const tiedEndTicks = sourceIsGraceNote
+              ? startTicks + GRACE_NOTE_DURATION_TICKS
+              : tieGroupNotes.reduce((endTick, tiedNote) => {
+                const tiedNoteDurationTicks = getSourceNoteDurationTicks(tiedNote);
+                if (tiedNoteDurationTicks === null) return endTick;
+                const tiedNoteStartTicks = getSourceNoteStartTicks(tiedNote, startTicks);
+                return Math.max(endTick, tiedNoteStartTicks + tiedNoteDurationTicks);
+              }, startTicks + noteDurationTicks);
             const rawDurationTicks = Math.max(1, tiedEndTicks - startTicks);
-            const adjustedDurationTicks = tieGroupNotes.length > 1
+            const adjustedDurationTicks = sourceIsGraceNote
+              ? GRACE_NOTE_DURATION_TICKS
+              : tieGroupNotes.length > 1
               ? rawDurationTicks
               : Math.max(1, Math.round(rawDurationTicks * playbackModifiers.durationMultiplier));
             const endTicks = startTicks + adjustedDurationTicks;
@@ -464,6 +668,14 @@ export const extractPlaybackTimeline = (
             ));
             if (noteIdentities.length === 0) noteIdentities.push(noteIdentity);
             const idBase = `${measureIndex}-${containerIndex}-${staffIndex}-${voiceId}-${noteIndex}-${columnKey}-${sourceMidi}`;
+            const arpeggio = getArpeggio(sourceNote);
+            const eventMetadata: PlaybackEventMetadata = {
+              isGraceNote: sourceIsGraceNote,
+              graceAnchorTick: sourceIsGraceNote ? startTicks : undefined,
+              graceGroupKey: sourceIsGraceNote ? ['grace', startTicks, staffId, voiceId].join(':') : undefined,
+              arpeggioGroupKey: sourceIsGraceNote ? undefined : getArpeggioGroupKey(sourceNote, startTicks, staffId, voiceId),
+              arpeggioDirection: sourceIsGraceNote || !arpeggio ? undefined : getArpeggioDirection(arpeggio),
+            };
 
             events.push({
               id: `${idBase}-on`,
@@ -481,6 +693,7 @@ export const extractPlaybackTimeline = (
               durationTicks: adjustedDurationTicks,
               velocityRatio: playbackModifiers.velocityRatio,
             });
+            metadataByEventId.set(`${idBase}-on`, eventMetadata);
 
             events.push({
               id: `${idBase}-off`,
@@ -496,15 +709,37 @@ export const extractPlaybackTimeline = (
               soundingMidi,
               renderedMidi,
             });
+            metadataByEventId.set(`${idBase}-off`, eventMetadata);
 
             durationTicks = Math.max(durationTicks, endTicks);
+
+            if (sourceHasFermata) {
+              const extraTicks = Math.max(1, Math.round(rawDurationTicks * (FERMATA_DURATION_MULTIPLIER - 1)));
+              const previousWarpPoint = warpPointsByBoundaryTick.get(endTicks);
+              warpPointsByBoundaryTick.set(endTicks, {
+                boundaryTick: endTicks,
+                extraTicks: Math.max(previousWarpPoint?.extraTicks ?? 0, extraTicks),
+              });
+            }
           });
         });
       });
     });
   });
 
-  events.sort((left, right) => {
+  const warpPoints = Array.from(warpPointsByBoundaryTick.values());
+  const fermataWarpedEvents = applyTimelineWarp(events, warpPoints);
+  const graceTimedEvents = applyGraceNoteTiming(fermataWarpedEvents, metadataByEventId);
+  const arpeggioTimedEvents = applyArpeggioTiming(graceTimedEvents, metadataByEventId);
+  const warpedEvents = updateWarpedNoteDurations(arpeggioTimedEvents);
+  const warpedTempoEvents = applyTimelineWarp(extractTempoEvents(osmd), warpPoints);
+  const warpedDurationTicks = Math.max(
+    applyWarpToTick(durationTicks, warpPoints),
+    ...warpedEvents.map((event) => event.tick),
+    ...warpedTempoEvents.map((event) => event.tick)
+  );
+
+  warpedEvents.sort((left, right) => {
     if (left.tick !== right.tick) return left.tick - right.tick;
     if (left.type !== right.type) return left.type === 'note-off' ? -1 : 1;
     return left.id.localeCompare(right.id);
@@ -512,9 +747,9 @@ export const extractPlaybackTimeline = (
 
   return {
     ppq: PLAYBACK_PPQ,
-    durationTicks,
-    events,
-    tempoEvents: extractTempoEvents(osmd),
+    durationTicks: warpedDurationTicks,
+    events: warpedEvents,
+    tempoEvents: warpedTempoEvents,
   };
 };
 

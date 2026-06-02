@@ -300,6 +300,77 @@ export const sampleMusicXML = `<?xml version="1.0" encoding="UTF-8" standalone="
         <type>eighth</type>
       </note>
     </measure>
+    <!-- Measure 9: Fermata playback check -->
+    <measure number="9">
+      <direction placement="above">
+        <direction-type>
+          <metronome>
+            <beat-unit>quarter</beat-unit>
+            <per-minute>60</per-minute>
+          </metronome>
+        </direction-type>
+        <sound tempo="60"/>
+      </direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>quarter</type>
+        <notations><fermata type="upright">normal</fermata></notations>
+      </note>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>quarter</type>
+      </note>
+      <note>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>quarter</type>
+      </note>
+      <note>
+        <pitch><step>F</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>quarter</type>
+      </note>
+    </measure>
+    <!-- Measure 10: Grace note and arpeggio playback check -->
+    <measure number="10">
+      <note>
+        <grace slash="yes"/>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <type>eighth</type>
+      </note>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>quarter</type>
+      </note>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>2</duration>
+        <type>quarter</type>
+      </note>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>half</type>
+        <notations><arpeggiate direction="up"/></notations>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>half</type>
+        <notations><arpeggiate direction="up"/></notations>
+      </note>
+      <note>
+        <chord/>
+        <pitch><step>G</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <type>half</type>
+        <notations><arpeggiate direction="up"/></notations>
+      </note>
+    </measure>
   </part>
 </score-partwise>`;
 
