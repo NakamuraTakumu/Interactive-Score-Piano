@@ -15,6 +15,7 @@ interface ScoreDisplayProps {
   onTitleReady?: (title: string) => void;
   onLoadingStateChange?: (isLoading: boolean) => void;
   onPlaybackTimelineReady?: (timeline: PlaybackTimeline | null, error?: string, generation?: number) => void;
+  onPlaybackSeek?: (columnKey: string) => void;
   onRangeProjectionInvalid?: () => void;
   activeNotes?: Set<number>;
   playbackColumnKey?: string | null;
@@ -58,6 +59,13 @@ interface RangeSpan {
   y: number;
   width: number;
   height: number;
+}
+
+interface PlaybackBar {
+  columnKey: string;
+  x: number;
+  y1: number;
+  y2: number;
 }
 
 interface OriginalSvgStyle {
@@ -131,6 +139,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   onTitleReady,
   onLoadingStateChange,
   onPlaybackTimelineReady,
+  onPlaybackSeek,
   onRangeProjectionInvalid,
   activeNotes = new Set(),
   playbackColumnKey = null,
@@ -158,46 +167,11 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const dragMovedRef = useRef(false);
   const rangePreviewStartedRef = useRef(false);
   const suppressNextClickRef = useRef(false);
+  const playbackBarDragRef = useRef(false);
+  const lastPlaybackBarColumnRef = useRef<string | null>(null);
   const loadGenerationRef = useRef(0);
   const sourceNoteMidiMapRef = useRef<SourceNoteMidiMap>(new Map());
   const originalSvgStyleRef = useRef<WeakMap<SVGElement, OriginalSvgStyle>>(new WeakMap());
-
-  const playbackSelection = useMemo<SelectionResult | null>(() => {
-    if (!playbackColumnKey || contexts.length === 0) return null;
-
-    const measure = contexts.find((ctx) =>
-      ctx.columnDetails.some((column) => column.columnKey === playbackColumnKey) ||
-      ctx.noteDetails.some((detail) => detail.columnKey === playbackColumnKey)
-    );
-    if (!measure) return null;
-
-    const relatedMeasures = contexts.filter((ctx) =>
-      ctx.measureNumber === measure.measureNumber &&
-      ctx.systemId === measure.systemId
-    );
-    const midiNotes = new Set<number>();
-    const xValues: number[] = [];
-
-    relatedMeasures.forEach((ctx) => {
-      ctx.noteDetails.forEach((detail) => {
-        if (detail.columnKey !== playbackColumnKey) return;
-        midiNotes.add(detail.midi);
-        xValues.push(detail.x);
-      });
-      ctx.columnDetails.forEach((column) => {
-        if (column.columnKey === playbackColumnKey) xValues.push(column.x);
-      });
-    });
-
-    if (midiNotes.size === 0) return null;
-
-    return {
-      measure,
-      midiNotes,
-      noteX: xValues.length > 0 ? xValues.reduce((sum, value) => sum + value, 0) / xValues.length : null,
-      columnKey: playbackColumnKey,
-    };
-  }, [contexts, playbackColumnKey, visualTranspose]);
 
   const activeRange = dragRange ?? playbackRangeSelection;
 
@@ -247,6 +221,26 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     orderedColumns.forEach((column, index) => indexMap.set(column.columnKey, index));
     return indexMap;
   }, [orderedColumns]);
+
+  const playbackBar = useMemo<PlaybackBar | null>(() => {
+    if (!playbackColumnKey) return null;
+    const column = orderedColumns.find((candidate) => candidate.columnKey === playbackColumnKey);
+    if (!column) return null;
+    return {
+      columnKey: column.columnKey,
+      x: column.x,
+      y1: column.y1,
+      y2: column.y2,
+    };
+  }, [orderedColumns, playbackColumnKey]);
+
+  const seekPlaybackBarAtPoint = (x: number, y: number, clientX: number, clientY: number) => {
+    if (!onPlaybackSeek) return;
+    const hit = getColumnAtPoint(x, y, clientX, clientY, false);
+    if (!hit || hit.columnKey === lastPlaybackBarColumnRef.current) return;
+    lastPlaybackBarColumnRef.current = hit.columnKey;
+    onPlaybackSeek(hit.columnKey);
+  };
 
   const getRangeColumnKeys = (startColumnKey: string, endColumnKey: string): string[] => {
     const startIndex = columnIndexByKey.get(startColumnKey);
@@ -474,9 +468,23 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     event.stopPropagation();
 
     const rect = containerRef.current.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    if (
+      playbackBar &&
+      onPlaybackSeek &&
+      Math.abs(x - playbackBar.x) <= 10 &&
+      y >= playbackBar.y1 - 8 &&
+      y <= playbackBar.y2 + 8
+    ) {
+      playbackBarDragRef.current = true;
+      lastPlaybackBarColumnRef.current = playbackBar.columnKey;
+      suppressNextClickRef.current = true;
+      return;
+    }
     const columnAtStart = getColumnAtPoint(
-      event.clientX - rect.left,
-      event.clientY - rect.top,
+      x,
+      y,
       event.clientX,
       event.clientY,
       false
@@ -495,6 +503,11 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     const rect = containerRef.current.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+
+    if (playbackBarDragRef.current && event.buttons === 1) {
+      seekPlaybackBarAtPoint(x, y, event.clientX, event.clientY);
+      return;
+    }
     
     // Update hover state
     const measure = getMeasureAtPoint(x, y, contexts);
@@ -540,6 +553,11 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
 
   const handleMouseUp = (event: React.MouseEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
+    if (playbackBarDragRef.current) {
+      playbackBarDragRef.current = false;
+      lastPlaybackBarColumnRef.current = null;
+      return;
+    }
     const startColumn = dragStartColumnRef.current;
     const endColumn = lastDragColumnRef.current;
     const startPoint = dragStartPointRef.current;
@@ -878,6 +896,28 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         />
       );
     });
+
+    if (playbackBar) {
+      lines.push(
+        <g key="playback-bar" data-testid="score-playback-bar">
+          <line
+            x1={playbackBar.x}
+            y1={playbackBar.y1}
+            x2={playbackBar.x}
+            y2={playbackBar.y2}
+            stroke="#2e7d32"
+            strokeWidth="3"
+            opacity="0.9"
+          />
+          <circle
+            cx={playbackBar.x}
+            cy={playbackBar.y1}
+            r="5"
+            fill="#2e7d32"
+          />
+        </g>
+      );
+    }
     
     // ガイドラインが無効の場合は線を描画しない
     if (showGuideLines && activeNotes.size > 0) {
@@ -901,7 +941,7 @@ const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
       });
     }
     return lines;
-  }, [activeNotes, contexts, matchingColumns, ppu, rangeSpans, showAllLines, showGuideLines, visualTranspose]);
+  }, [activeNotes, contexts, matchingColumns, playbackBar, ppu, rangeSpans, showAllLines, showGuideLines, visualTranspose]);
 
   return (
     <div 

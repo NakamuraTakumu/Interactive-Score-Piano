@@ -151,7 +151,6 @@ function App() {
 
   const playbackStatus = playbackSession.status;
   const playbackTick = playbackSession.tick;
-  const playbackColumnKey = playbackSession.currentColumnKey;
   const playbackRangeSelection = playbackSession.range;
   const activePlaybackEvents = useMemo(
     () => Array.from(playbackSession.activeEvents.values()),
@@ -169,6 +168,18 @@ function App() {
     () => formatTempoLabel(playbackTimeline?.tempoEvents),
     [playbackTimeline]
   );
+  const playbackColumnKey = useMemo(() => {
+    if (playbackSession.currentColumnKey) return playbackSession.currentColumnKey;
+    const noteOnEvents = playbackTimeline?.events.filter((event) => event.type === 'note-on') ?? [];
+    if (noteOnEvents.length === 0) return null;
+
+    let position = noteOnEvents[0].columnKey;
+    for (const event of noteOnEvents) {
+      if (event.tick > playbackTick) break;
+      position = event.columnKey;
+    }
+    return position;
+  }, [playbackSession.currentColumnKey, playbackTick, playbackTimeline]);
 
   // Rename dialog state
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -221,7 +232,13 @@ function App() {
     stopPlaybackNotes();
   }, [playPlaybackNoteOff, stopPlaybackNotes]);
 
-  const stopPlayback = useCallback((resetPosition: boolean = true) => {
+  const stopPlayback = useCallback((resetPosition: boolean = true, clearRange: boolean = false) => {
+    const currentSession = playbackSessionRef.current;
+    const preservedRange = clearRange ? null : currentSession.range;
+    const preservedMode = preservedRange ? 'range' : 'full';
+    const resetTick = preservedRange
+      ? currentSession.scheduler.loopStartTick
+      : 0;
     playbackStartTokenRef.current += 1;
     expiredPlaybackNoteIdsRef.current.clear();
     clearPlaybackTimer();
@@ -230,9 +247,9 @@ function App() {
     updatePlaybackSession(createPlaybackSession(
       nextPlaybackSessionIdRef.current++,
       'stopped',
-      'full',
-      null,
-      resetPosition ? 0 : playbackSessionRef.current.tick
+      preservedMode,
+      preservedRange,
+      resetPosition ? resetTick : currentSession.tick
     ));
   }, [clearActivePlaybackNotes, clearPlaybackTimer, updatePlaybackSession]);
 
@@ -247,7 +264,6 @@ function App() {
       ...session,
       status: 'paused',
       tick: currentTick,
-      currentColumnKey: null,
       activeEvents: new Map(),
       scheduler: {
         ...session.scheduler,
@@ -272,7 +288,6 @@ function App() {
         return {
           ...session,
           activeEvents,
-          currentColumnKey: activeEvents.size > 0 ? session.currentColumnKey : null,
         };
       });
       return;
@@ -336,14 +351,14 @@ function App() {
 
     const timeline = playbackTimelineRef.current;
     if (!timeline) {
-      stopPlayback(true);
+      stopPlayback(true, true);
       return;
     }
     if (
       session.scheduler.timelineGeneration !== null &&
       timeline.generation !== session.scheduler.timelineGeneration
     ) {
-      stopPlayback(true);
+      stopPlayback(true, true);
       return;
     }
 
@@ -445,7 +460,7 @@ function App() {
     const timeline = playbackTimelineRef.current;
     if (!timeline || timeline.events.length === 0) {
       setPlaybackIssue('timeline', 'No playable notes for simple playback.');
-      stopPlayback(true);
+      stopPlayback(true, true);
       return;
     }
 
@@ -510,13 +525,76 @@ function App() {
     runPlaybackStep(nextSessionId, startToken);
   }, [clearActivePlaybackNotes, clearPlaybackIssue, clearPlaybackTimer, runPlaybackStep, setPlaybackIssue, startAudio, stopPlayback, updatePlaybackSession]);
 
+  const handlePlaybackSeek = useCallback((columnKey: string) => {
+    const timeline = playbackTimelineRef.current;
+    if (!timeline) return;
+
+    const targetEvents = timeline.events.filter(
+      (event) => event.type === 'note-on' && event.columnKey === columnKey
+    );
+    if (targetEvents.length === 0) return;
+
+    const targetTick = Math.min(...targetEvents.map((event) => event.tick));
+    const currentSession = playbackSessionRef.current;
+    if (currentSession.range && !currentSession.range.columnKeys.includes(columnKey)) {
+      return;
+    }
+    const keepRange = currentSession.mode === 'range' &&
+      currentSession.range?.columnKeys.includes(columnKey);
+    const nextEventIndex = timeline.events.findIndex((event) => event.tick >= targetTick);
+    const nextStatus = currentSession.status === 'playing' ? 'playing' : 'paused';
+    const startToken = ++playbackStartTokenRef.current;
+
+    clearPlaybackTimer();
+    clearActivePlaybackNotes();
+    expiredPlaybackNoteIdsRef.current.clear();
+    setSelected(null);
+    updatePlaybackSession({
+      ...currentSession,
+      status: nextStatus,
+      mode: keepRange ? 'range' : 'full',
+      range: keepRange ? currentSession.range : null,
+      tick: targetTick,
+      currentColumnKey: columnKey,
+      activeEvents: new Map(),
+      scheduler: {
+        ...currentSession.scheduler,
+        startTick: targetTick,
+        startTime: nextStatus === 'playing' ? performance.now() : 0,
+        nextEventIndex: nextEventIndex === -1 ? timeline.events.length : nextEventIndex,
+        loopStartTick: keepRange ? currentSession.scheduler.loopStartTick : targetTick,
+        loopStartEventIndex: keepRange
+          ? currentSession.scheduler.loopStartEventIndex
+          : (nextEventIndex === -1 ? timeline.events.length : nextEventIndex),
+        rangeEndTick: keepRange ? currentSession.scheduler.rangeEndTick : null,
+        allowedEventIds: keepRange ? currentSession.scheduler.allowedEventIds : null,
+        timelineGeneration: timeline.generation ?? null,
+      },
+    });
+
+    if (nextStatus === 'playing') {
+      playbackTimerRef.current = window.setInterval(
+        () => runPlaybackStep(currentSession.id, startToken),
+        25
+      );
+      runPlaybackStep(currentSession.id, startToken);
+    }
+  }, [clearActivePlaybackNotes, clearPlaybackTimer, runPlaybackStep, updatePlaybackSession]);
+
   const togglePlayback = useCallback(async () => {
     if (playbackSessionRef.current.status === 'playing') {
       pausePlayback();
       return;
     }
+    if (
+      playbackSessionRef.current.status === 'stopped' &&
+      playbackSessionRef.current.range
+    ) {
+      await startRangePlayback(playbackSessionRef.current.range);
+      return;
+    }
     await startPlayback();
-  }, [pausePlayback, startPlayback]);
+  }, [pausePlayback, startPlayback, startRangePlayback]);
 
   const handlePlaybackTimelineReady = useCallback((timeline: PlaybackTimeline | null, error?: string, generation?: number) => {
     const nextGeneration = typeof generation === 'number'
@@ -530,7 +608,7 @@ function App() {
       playbackSessionRef.current.status === 'playing' &&
       playbackSessionRef.current.scheduler.timelineGeneration !== nextGeneration
     ) {
-      stopPlayback(true);
+      stopPlayback(true, true);
     }
     playbackTimelineRef.current = nextTimeline;
     setPlaybackTimeline(nextTimeline);
@@ -583,7 +661,7 @@ function App() {
     setPlaybackTimeline(null);
     clearPlaybackIssue();
     if (playbackSessionRef.current.status !== 'stopped') {
-      stopPlayback(true);
+      stopPlayback(true, true);
     }
   }, [scoreData, settings.scoreDrawingParameters, settings.visualTranspose, clearPlaybackIssue, stopPlayback]);
 
@@ -620,7 +698,7 @@ function App() {
   }, []);
 
   const onScoreChangeWrapper = (id: string) => {
-    stopPlayback(true);
+    stopPlayback(true, true);
     handleScoreChange(id, resetSelection);
   };
   
@@ -640,7 +718,7 @@ function App() {
 
   const handleDeleteScoreWrapper = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    stopPlayback(true);
+    stopPlayback(true, true);
     handleDeleteScore(id);
     if (currentScoreId === id) resetSelection();
   };
@@ -714,10 +792,17 @@ function App() {
 
   const handleRangeProjectionInvalid = useCallback(() => {
     if (playbackSessionRef.current.mode === 'range') {
-      stopPlayback(true);
+      stopPlayback(true, true);
       setPlaybackIssue('range', 'Selected range is no longer visible.');
     }
   }, [setPlaybackIssue, stopPlayback]);
+
+  const handleOutsideScoreClick = useCallback(() => {
+    resetSelection();
+    if (playbackSessionRef.current.range) {
+      stopPlayback(false, true);
+    }
+  }, [resetSelection, stopPlayback]);
 
   const handleTitleReady = useCallback((title: string) => {
     updateScoreNameFromTitle(currentScoreId, title);
@@ -772,7 +857,7 @@ function App() {
           pb: '140px',
           bgcolor: '#f5f5f5' // 背景を少しグレーにしてPaperを際立たせる
         }}
-        onClick={resetSelection}
+        onClick={handleOutsideScoreClick}
       >
         <Box sx={{ px: { xs: 1, sm: 2, md: 4 }, py: 2, width: '100%' }}>
           <Typography variant="h5" component="h1" gutterBottom align="center" sx={{ fontWeight: 'bold', mb: 2 }}>
@@ -791,7 +876,7 @@ function App() {
             isAudioStarted={isAudioStarted}
             onStartAudio={startAudio}
             onFileUpload={(e) => {
-              stopPlayback(true);
+              stopPlayback(true, true);
               handleFileUpload(e, resetSelection);
             }}
             soundFontOptions={soundFontOptions}
@@ -820,7 +905,6 @@ function App() {
               width: '100%',
               overflow: 'hidden'
             }}
-            onClick={resetSelection}
           >
             <MemoizedScoreDisplay 
               data={scoreData} 
@@ -833,6 +917,7 @@ function App() {
               onTitleReady={handleTitleReady}
               onLoadingStateChange={handleLoadingStateChange}
               onPlaybackTimelineReady={handlePlaybackTimelineReady}
+              onPlaybackSeek={handlePlaybackSeek}
               onRangeProjectionInvalid={handleRangeProjectionInvalid}
               activeNotes={activeNotes}
               playbackColumnKey={playbackColumnKey}
