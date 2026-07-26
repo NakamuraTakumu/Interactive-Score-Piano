@@ -22,7 +22,7 @@ Responsibility: 表示中の楽譜を簡単に再生する v1 機能の範囲、
 - **対象楽譜**: 既に OSMD で表示できる `.mxl`, `.xml`, `.musicxml`。
 - **開始条件**: Play button などの明示的な user gesture で開始する。
 - **音源**: 既存の `usePianoSound()` と現在選択中の SoundFont / GM program / volume / transpose 設定を使う。
-- **テンポ**: 楽譜から数値 BPM の tempo map を抽出し、再生 tick は tempo map に従って進める。抽出できない場合は 100 BPM を使う。ユーザーは BPM を直接指定せず、速度倍率 `0.5x-2.0x` を変更する。
+- **テンポ**: 楽譜から数値 BPM の tempo map を抽出し、再生 tick は tempo map に従って進める。文字だけの `rit.` は次の `a tempo` またはテンポ指示まで、開始 BPM の 75% へ線形に減速する。`a tempo` は `rit.` 開始前の基準 BPM へ戻す。抽出できない場合は 100 BPM を使う。ユーザーは BPM を直接指定せず、速度倍率 `0.5x-2.0x` を変更する。
 - **再生範囲**: Play button は表示中スコアの先頭から末尾まで再生する。楽譜上の drag は mouseup で範囲を確定し、その範囲だけ再生する。
 - **ループ**: Loop toggle が ON の場合、全体再生と範囲再生の終端で同じ再生範囲を繰り返す。Loop toggle は保存され、OFF が既定値である。
 - **譜面同期**: 現在鳴っている column は既存の click selection と同じ緑の note / measure highlight として表示する。
@@ -30,7 +30,7 @@ Responsibility: 表示中の楽譜を簡単に再生する v1 機能の範囲、
 
 ### Non-Scope
 
-- MusicXML の repeat, jump, coda, fine, pedal, fermata, tenuto, swing, instrument change は v1 では解釈しない。テンポは数値 BPM が読める tempo expression / sound tempo だけを扱い、`rit.` / `accel.` など文字だけの漸次変化は解釈しない。`accent`、`strong-accent` 系、`staccato`、`staccatissimo` は簡易 articulation として既存 note-on / note-off を変形する。
+- MusicXML の repeat, jump, coda, fine, pedal, fermata, tenuto, swing, instrument change は v1 では解釈しない。テンポは数値 BPM が読める tempo expression / sound tempo、文字だけの `rit.`、`a tempo` を扱う。`accel.` などほかの文字だけの漸次変化は解釈しない。`accent`、`strong-accent` 系、`staccato`、`staccatissimo` は簡易 articulation として既存 note-on / note-off を変形する。
 - 楽譜を開いただけで自動再生しない。
 - MIDI 入力の練習判定や追従再生は扱わない。
 - 正式な SMF export / import は扱わない。
@@ -137,7 +137,7 @@ interface PlaybackTempoEvent {
 - `columnKey`: score cursor と既存 column overlay との接続点にする。
 - `durationTicks`: note-on event 側では抽出できた note duration を保持する。note-off event 側では省略してよい。
 - `velocityRatio`: note-on event 側で MIDI velocity の倍率を保持する。未指定の場合は既定の簡易再生 velocity を使う。
-- `tempoEvents`: MusicXML / OSMD から抽出した数値 tempo map。譜面上の数値 BPM 変更を絶対 tick に変換して保持し、抽出できない場合は `{ tick: 0, bpm: 100 }` を入れる。
+- `tempoEvents`: MusicXML / OSMD から抽出した tempo map。譜面上の数値 BPM 変更を絶対 tick に変換する。`rit.` 区間は 16 分音符単位の tempo event へ展開し、開始 BPM から 75% まで線形補間する。`a tempo` の tick では基準 BPM の event を優先する。抽出できない場合は `{ tick: 0, bpm: 100 }` を入れる。
 
 ### Range Selection Model
 
@@ -191,7 +191,7 @@ interface ScoreRangeSelection extends ScoreRangeDraft {}
 - note-on と note-off が同 tick に並ぶ場合は、note-off を先に処理して同音連打の詰まりを避ける。
 - pause は現在 tick を保持するが、pause 時点で鳴っていた長い note を resume 時に途中から鳴らし直さない。v1 の resume は次に到達する note-on から発音を再開する。
 - pause 時の `currentTick` は「停止操作を受けた時点の再生 tick」とする。resume では `currentTick` 以上の未処理 event から scheduling を再開する。
-- stopped または score change では `PlaybackSession.activeEvents` を空にし、cursor と range overlay を消す。
+- stopped では `PlaybackSession.activeEvents` を空にして cursor を消すが、確定済み range overlay は維持する。score change または楽譜外クリックでは range overlay も消す。
 - Loop OFF の範囲再生では `startTick` 以上、範囲終端 tick 以下の events を処理し、終端到達時に通常の stop と同じ cleanup を行う。
 - Loop ON の終端到達時は、発音中 note を止め、`PlaybackSession.id` と確定済み `range` を維持したまま `loopStartTick` / `loopStartEventIndex` へ scheduler を戻す。score change, timeline generation change, range invalidation は loop より優先して stop する。
 - 範囲確定後に再生可能 note がない場合は、既存 playback を停止し、transport を stopped session に戻す。range validation error は timeline failure とは分け、全体 Play を恒久的に disabled にしない。
@@ -238,12 +238,12 @@ interface ScoreRangeSelection extends ScoreRangeDraft {}
 18. 音符がない位置から drag を開始しても、同一小節内の timestamp column を始点として範囲選択が始まる。
 19. playback の pause / stop / score change 後、緑の score note 装飾と keyboard highlight は残らない。
 20. playback 中に drag しても範囲 preview が表示され、mouseup 後にその範囲の playback へ切り替わる。
-21. 範囲確定後、その範囲の小節領域 overlay は range session の playing / paused 中に残り、stop / score change / playback end で消える。
+21. 範囲確定後、その範囲の小節領域 overlay は range session の playing / paused / stopped 中に残る。楽譜外クリックまたは score change で消える。
 22. 範囲選択によって notehead は着色されず、notehead が緑になるのは対応する playback note が発音中の間だけである。
 23. 二段譜で右手譜表または左手譜表だけを drag 選択した場合、範囲 overlay と範囲再生は選択された譜表だけに限定される。
 24. UI regression test は、drag 中の range overlay、mouseup 後の range overlay、演奏中の score notehead green、演奏中の keyboard green を DOM または screenshot で確認する。
 25. Loop toggle が ON の場合、全体再生と範囲再生は終端到達後に同じ範囲を繰り返す。
-26. 範囲 loop 中は range overlay が維持され、Stop 後は range overlay、score notehead green、keyboard green が消える。
+26. 範囲 loop 中と Stop 後は range overlay が維持される。Stop 後は score notehead green と keyboard green だけが消える。
 27. Loop toggle が OFF の場合、全体再生と範囲再生は終端で停止する。
 
 ## Detail

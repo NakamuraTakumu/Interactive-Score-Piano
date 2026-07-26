@@ -23,7 +23,7 @@ Responsibility: Created 時点の再生実装が MXL / MusicXML 4.0 の再生関
 - **MXL コンテナ**: OSMD へ `.mxl` binary string を渡すだけ。zip / `META-INF/container.xml` / `mimetype` / alternate rootfile の検証や選択はアプリ側ではしない。
 - **音高と発音対象**: pitched note の `sourceNote.Pitch` を MIDI 化し、`visualTranspose` 後の描画 pitch を再生 pitch として使う。`unpitched`、percussion、instrument 別 channel は扱わない。
 - **時間軸**: OSMD が作った source measure / timestamp / note length から tick を作る。`backup` / `forward` / multiple voice / multiple staff は直接解釈せず、OSMD の正規化結果に依存する。
-- **テンポ**: OSMD の tempo expression から数値 BPM の tempo map を作り、再生 tick は tempo map とユーザー速度倍率で進める。テンポ未指定時は 100 BPM を使う。`rit.` / `accel.` など文字だけの漸次変化は扱わない。
+- **テンポ**: OSMD の tempo expression から BPM の tempo map を作り、再生 tick は tempo map とユーザー速度倍率で進める。テンポ未指定時は 100 BPM を使う。文字だけの `rit.` は開始 BPM の 75% まで線形に減速し、`a tempo` で基準 BPM へ戻す。`accel.` などほかの文字だけの漸次変化は扱わない。
 - **反復やジャンプ**: MusicXML の repeat、ending、D.C. / D.S. / coda / fine は展開しない。今回追加した Loop はユーザー操作の transport loop であり、MusicXML の repeat 解釈ではない。
 - **音符装飾**: MusicXML の note 装飾は `notations` 配下に `articulations`、`ornaments`、`technical`、`dynamics`、`fermata`、`arpeggiate` などとして表れる。現在の再生実装は OSMD が `VoiceEntry.Articulations` として解釈した `accent`、`strong-accent` 系、`staccato`、`staccatissimo` だけを、既存 note-on / note-off event の velocity / duration 変形として反映する。それ以外の装飾は視覚要素として表示されるだけで、発音 timing / pitch / 奏法には反映しない。
 
@@ -43,7 +43,7 @@ Responsibility: Created 時点の再生実装が MXL / MusicXML 4.0 の再生関
 | clef / key / octave shift | 表示、hit-test、補助線用に使う。 | **再生では限定的**。音高は OSMD source pitch / rendered pitch に依存する。 |
 | transposing instruments `<transpose>` | `sourceMidi` と `renderedMidi` を分け、`visualTranspose` 前 pitch を保存する。 | **不完全**。MusicXML の `<transpose>` を concert pitch 再生として体系的には扱っていない。 |
 | initial tempo | OSMD の tempo expression / measure tempo などから tick 0 の BPM を採用する。見つからない場合は 100 BPM を使う。 | **部分対応**。 |
-| tempo changes | OSMD の `TimestampSortedTempoExpressionsList` から数値 BPM を絶対 tick に変換し、再生 clock が tempo map に従う。 | **部分対応**。数値 BPM が読める tempo expression / sound tempo のみ扱い、文字だけの漸次変化は扱わない。 |
+| tempo changes | OSMD の `TimestampSortedTempoExpressionsList` から数値 BPM を絶対 tick に変換し、再生 clock が tempo map に従う。文字だけの `rit.` は 16 分音符単位の tempo event に展開する。 | **部分対応**。数値 BPM、`rit.`、`a tempo` を扱う。`accel.` などほかの文字だけの漸次変化は扱わない。 |
 | repeat / ending | 展開しない。 | **非対応**。 |
 | D.C. / D.S. / coda / fine | `<sound>` attributes を見ない。 | **非対応**。 |
 | tie | OSMD の `sourceNote.NoteTie.notes` から tie chain を読み、chain 先頭の note-on と chain 末尾の note-off に畳む。発音中は chain 内の notehead を同時に highlight する。 | **部分対応**。同音連結の再アタックを避ける。範囲再生が tie chain 途中から始まる場合の再発音補正は行わない。 |
@@ -79,7 +79,7 @@ Responsibility: Created 時点の再生実装が MXL / MusicXML 4.0 の再生関
 ### 優先して埋めるなら
 
 1. **timeline extraction の正本化**: OSMD private-ish object を直接なぞるだけでなく、MusicXML duration / divisions / backup / forward / chord / voice / staff を明示した中間表現に落とす。
-2. **tempo map の拡張**: 数値 BPM の tempo event は対応済み。次は `rit.` / `accel.` など文字だけの漸次変化を扱うかを決める。
+2. **tempo map の拡張**: 数値 BPM、`rit.`、`a tempo` は対応済み。次は `accel.` などほかの文字だけの漸次変化を扱うかを決める。
 3. **repeat graph**: repeat / ending / D.C. / D.S. / coda / fine を display order とは別の playback order として展開する。
 4. **tie merge の範囲拡張**: 基本の tie chain は対応済み。範囲再生が tie chain 途中から始まる場合や、tie chain の一部だけを選択した場合の再発音方針は未整理。
 5. **note notation interpreter**: `accent`、`strong-accent` 系、`staccato`、`staccatissimo` は単純変形として対応済み。次に `arpeggiate`、`dynamics`、`fermata`、`tenuto`、breath / caesura を、実装対象にするものと表示のみのものへ分類する。

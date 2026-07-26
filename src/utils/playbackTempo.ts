@@ -17,6 +17,7 @@ export const formatTempoLabel = (tempoEvents: PlaybackTempoEvent[] | undefined):
   const bpms = Array.from(new Set((tempoEvents ?? [])
     .map((event) => event.bpm)
     .filter((bpm) => Number.isFinite(bpm) && bpm > 0)
+    .map((bpm) => Math.round(bpm))
   )).sort((left, right) => left - right);
 
   if (bpms.length === 0) return `${FALLBACK_SCORE_BPM} BPM`;

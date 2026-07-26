@@ -150,6 +150,36 @@ const lateSingleTempoMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
   </part>
 </score-partwise>`;
 
+const gradualTempoMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>120</per-minute></metronome></direction-type><sound tempo="120"/></direction>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+    <measure number="2">
+      <direction placement="above"><direction-type><words>rit.</words></direction-type></direction>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+    <measure number="3">
+      <direction placement="above"><direction-type><words>a tempo</words></direction-type></direction>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
 const fermataMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="3.1">
@@ -191,7 +221,7 @@ const graceArpeggioMusicXML = `<?xml version="1.0" encoding="UTF-8"?>
 </score-partwise>`;
 
 const assertTempoMapTimeline = async (page) => {
-  const result = await page.evaluate(async ({ tempoChangeMusicXML, noTempoMusicXML, lateSingleTempoMusicXML }) => {
+  const result = await page.evaluate(async ({ tempoChangeMusicXML, noTempoMusicXML, lateSingleTempoMusicXML, gradualTempoMusicXML }) => {
     const transformedUtils = await fetch('/Interactive-Score-Piano/src/utils/osmdCoordinates.ts').then((response) => response.text());
     const osmdImport = transformedUtils.match(/from\s+["']([^"']*opensheetmusicdisplay[^"']*)["']/)?.[1];
     if (!osmdImport) throw new Error('Could not resolve transformed OSMD import path.');
@@ -229,16 +259,18 @@ const assertTempoMapTimeline = async (page) => {
     const tempoTimeline = await buildTimeline(tempoChangeMusicXML);
     const noTempoTimeline = await buildTimeline(noTempoMusicXML);
     const lateSingleTempoTimeline = await buildTimeline(lateSingleTempoMusicXML);
+    const gradualTempoTimeline = await buildTimeline(gradualTempoMusicXML);
     return {
       tempoEvents: tempoTimeline.tempoEvents,
       noTempoEvents: noTempoTimeline.tempoEvents,
       lateSingleTempoEvents: lateSingleTempoTimeline.tempoEvents,
       lateSingleTempoLabel: formatTempoLabel(lateSingleTempoTimeline.tempoEvents),
+      gradualTempoEvents: gradualTempoTimeline.tempoEvents,
       tempoLabel: formatTempoLabel(tempoTimeline.tempoEvents),
       tickAt2500Ms: advanceTickByElapsedMs(0, 2500, tempoTimeline.tempoEvents, tempoTimeline.ppq, 1),
       tickAt2500MsDoubleSpeed: advanceTickByElapsedMs(0, 2500, tempoTimeline.tempoEvents, tempoTimeline.ppq, 2),
     };
-  }, { tempoChangeMusicXML, noTempoMusicXML, lateSingleTempoMusicXML });
+  }, { tempoChangeMusicXML, noTempoMusicXML, lateSingleTempoMusicXML, gradualTempoMusicXML });
 
   const firstTempo = result.tempoEvents.find((event) => event.tick === 0);
   const secondTempo = result.tempoEvents.find((event) => event.tick === 1920);
@@ -253,6 +285,18 @@ const assertTempoMapTimeline = async (page) => {
   }
   if (result.tempoLabel !== '60-120 BPM') {
     throw new Error(`Expected tempo range label. result=${JSON.stringify(result)}`);
+  }
+  const ritardandoEvents = result.gradualTempoEvents.filter((event) => event.tick >= 1920 && event.tick < 3840);
+  if (
+    ritardandoEvents.length < 8 ||
+    ritardandoEvents[0].bpm !== 120 ||
+    ritardandoEvents[ritardandoEvents.length - 1].bpm >= 95
+  ) {
+    throw new Error(`Expected rit. to approach 75% of 120 BPM across measure 2. result=${JSON.stringify(result)}`);
+  }
+  const aTempoEvent = result.gradualTempoEvents.find((event) => event.tick === 3840);
+  if (!aTempoEvent || aTempoEvent.bpm !== 120) {
+    throw new Error(`Expected a tempo to restore 120 BPM at measure 3. result=${JSON.stringify(result)}`);
   }
   if (Math.abs(result.tickAt2500Ms - 1200) > 2) {
     throw new Error(`Expected 2500ms at 1x to advance to about tick 1200. result=${JSON.stringify(result)}`);
@@ -680,6 +724,7 @@ const assertScoreLayoutIsGlobal = async (page) => {
     nonLoopStoppedAtEnd = false;
   }
   const nonLoopGreenAfterEnd = await countGreenScoreElements(page) + await countGreenKeyboardKeys(page);
+  const nonLoopRangeAfterEnd = await countRangeRects(page);
 
   await page.getByTestId('playback-loop-toggle').click();
   const loopPoints = await getScoreDragPoints(page);
@@ -703,6 +748,7 @@ const assertScoreLayoutIsGlobal = async (page) => {
     nonLoopRange,
     nonLoopStoppedAtEnd,
     nonLoopGreenAfterEnd,
+    nonLoopRangeAfterEnd,
     loopRange,
     loopObservation,
     loopRangeAfterObservation,
@@ -723,6 +769,9 @@ const assertScoreLayoutIsGlobal = async (page) => {
   if (nonLoopRange.duringRange <= 0) throw new Error('Expected green range overlay while dragging in non-loop end check.');
   if (!nonLoopStoppedAtEnd) throw new Error('Expected range playback to stop at end when loop is off.');
   if (nonLoopGreenAfterEnd !== 0) throw new Error('Expected non-loop playback highlights to clear after natural end.');
+  if (nonLoopRangeAfterEnd !== nonLoopRange.afterRange) {
+    throw new Error('Expected committed range overlay to remain after natural playback end.');
+  }
   if (loopRange.duringRange <= 0) throw new Error('Expected green range overlay while dragging with loop enabled.');
   if (loopRange.afterRange <= 0) throw new Error('Expected green range overlay after loop range commit.');
   if (loopObservation.greenEdges < 2) throw new Error(`Expected playback highlights to recur across loop cycles. edges=${loopObservation.greenEdges}`);
@@ -733,7 +782,9 @@ const assertScoreLayoutIsGlobal = async (page) => {
   }
   if (loopRangeAfterObservation <= 0) throw new Error('Expected range overlay to remain while loop playback continues.');
   if (loopGreenAfterStop !== 0) throw new Error('Expected loop score/keyboard highlights to clear after Stop.');
-  if (loopRangeAfterStop !== 0) throw new Error('Expected loop range overlay to clear after Stop.');
+  if (loopRangeAfterStop !== loopRangeAfterObservation) {
+    throw new Error('Expected committed range overlay to remain after Stop.');
+  }
 
   await browser.close();
 })().catch(async (error) => {

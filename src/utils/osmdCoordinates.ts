@@ -8,6 +8,8 @@ const FERMATA_DURATION_MULTIPLIER = 1.5;
 const GRACE_NOTE_DURATION_TICKS = PLAYBACK_PPQ / 8;
 const ARPEGGIO_STEP_TICKS = PLAYBACK_PPQ / 24;
 const OSMD_ARPEGGIO_TYPE_DOWN = 3;
+const GRADUAL_TEMPO_TARGET_RATIO = 0.75;
+const GRADUAL_TEMPO_STEP_TICKS = PLAYBACK_PPQ / 4;
 
 type TimelineWarpPoint = {
   boundaryTick: number;
@@ -360,29 +362,160 @@ const getTempoExpressionTick = (expression: any): number | null => {
   return measureStartTicks + localTicks;
 };
 
+const getContinuousTempo = (expression: any): any => {
+  return expression?.ContinuousTempo ?? expression?.continuousTempo ?? null;
+};
+
+const getTempoExpressionLabels = (expression: any): string[] => {
+  const continuousTempo = getContinuousTempo(expression);
+  const labels: unknown[] = [
+    continuousTempo?.Label,
+    continuousTempo?.label,
+    expression?.InstantaneousTempo?.Label,
+    expression?.instantaneousTempo?.label,
+    expression?.CombinedExpressionsText,
+    expression?.combinedExpressionsText,
+  ];
+  expression?.EntriesList?.forEach((entry: any) => {
+    labels.push(entry?.label, entry?.Expression?.Label);
+  });
+  expression?.entriesList?.forEach((entry: any) => {
+    labels.push(entry?.label, entry?.expression?.label);
+  });
+  return labels.filter((label): label is string => typeof label === 'string');
+};
+
+const isSupportedRitardando = (expression: any): boolean => {
+  return getTempoExpressionLabels(expression).some((label) =>
+    /\brit(?:\.|ard(?:ando)?\.?)(?:\s|$)/i.test(label)
+  );
+};
+
+const isATempo = (expression: any): boolean => {
+  return getTempoExpressionLabels(expression).some((label) =>
+    /\ba\s+tempo\b/i.test(label)
+  );
+};
+
+const getContinuousTempoEndTick = (expression: any): number | null => {
+  const continuousTempo = getContinuousTempo(expression);
+  return fractionToTicks(
+    continuousTempo?.AbsoluteEndTimestamp ??
+    continuousTempo?.absoluteEndTimestamp
+  );
+};
+
+const getTempoAtTick = (
+  tempoEvents: PlaybackTempoEvent[],
+  tick: number
+): number | null => {
+  let bpm: number | null = null;
+  tempoEvents
+    .filter((event) => event.tick <= tick)
+    .sort((left, right) => left.tick - right.tick)
+    .forEach((event) => {
+      bpm = event.bpm;
+    });
+  return bpm;
+};
+
+const expandGradualTempoExpression = (
+  expression: any,
+  instantaneousTempoEvents: PlaybackTempoEvent[],
+  explicitEndTick: number | null = null
+): PlaybackTempoEvent[] => {
+  if (!isSupportedRitardando(expression)) return [];
+  const startTick = getTempoExpressionTick(expression);
+  const endTick = explicitEndTick ?? getContinuousTempoEndTick(expression);
+  if (startTick === null || endTick === null || endTick <= startTick) return [];
+
+  const continuousTempo = getContinuousTempo(expression);
+  const calculatedStartBpm = normalizeBpm(
+    continuousTempo?.StartTempo ??
+    continuousTempo?.startTempo
+  );
+  const startBpm = calculatedStartBpm ??
+    getTempoAtTick(instantaneousTempoEvents, startTick);
+  if (startBpm === null) return [];
+
+  const targetBpm = Math.max(20, startBpm * GRADUAL_TEMPO_TARGET_RATIO);
+  const events: PlaybackTempoEvent[] = [];
+  const terminalTick = Math.max(startTick, endTick - 1);
+  for (let tick = startTick; tick < terminalTick; tick += GRADUAL_TEMPO_STEP_TICKS) {
+    const progress = (tick - startTick) / (endTick - startTick);
+    events.push({
+      tick,
+      bpm: Math.round((startBpm + (targetBpm - startBpm) * progress) * 100) / 100,
+    });
+  }
+  if (events[events.length - 1]?.tick !== terminalTick) {
+    events.push({ tick: terminalTick, bpm: Math.round(targetBpm * 100) / 100 });
+  }
+  return events;
+};
+
 const extractTempoEvents = (osmd: OpenSheetMusicDisplay): PlaybackTempoEvent[] => {
   const sheet: any = osmd.Sheet;
-  const tempoEvents: PlaybackTempoEvent[] = [];
+  const instantaneousTempoEvents: PlaybackTempoEvent[] = [];
 
   const addTempoExpression = (expression: any) => {
     const bpm = getTempoExpressionBpm(expression);
     const tick = getTempoExpressionTick(expression);
     if (bpm === null || tick === null) return;
-    tempoEvents.push({ tick, bpm });
+    instantaneousTempoEvents.push({ tick, bpm });
   };
 
   const timestampSortedExpressions = sheet?.TimestampSortedTempoExpressionsList ?? sheet?.timestampSortedTempoExpressionsList ?? [];
   timestampSortedExpressions.forEach(addTempoExpression);
 
-  if (tempoEvents.length === 0) {
+  if (instantaneousTempoEvents.length === 0) {
     sheet?.SourceMeasures?.forEach((measure: any) => {
       measure?.TempoExpressions?.forEach(addTempoExpression);
       measure?.tempoExpressions?.forEach(addTempoExpression);
     });
   }
 
+  const sortedExpressions: Array<{ expression: any; tick: number }> = timestampSortedExpressions
+    .map((expression: any) => ({ expression, tick: getTempoExpressionTick(expression) }))
+    .filter((entry: any): entry is { expression: any; tick: number } => entry.tick !== null)
+    .sort((left: { tick: number }, right: { tick: number }) => left.tick - right.tick);
+  const restoredTempoEvents: PlaybackTempoEvent[] = [];
+  const gradualTempoEvents: PlaybackTempoEvent[] = sortedExpressions.flatMap((
+    entry: { expression: any; tick: number },
+    index: number
+  ) => {
+    if (!isSupportedRitardando(entry.expression)) return [];
+    const nextBoundary = sortedExpressions.slice(index + 1).find((candidate: { expression: any; tick: number }) =>
+      candidate.tick > entry.tick &&
+      (isATempo(candidate.expression) || getTempoExpressionBpm(candidate.expression) !== null)
+    );
+    const startBpm = getTempoAtTick(
+      [...instantaneousTempoEvents, ...restoredTempoEvents],
+      entry.tick
+    );
+    if (startBpm === null) return [];
+    if (nextBoundary && isATempo(nextBoundary.expression)) {
+      restoredTempoEvents.push({ tick: nextBoundary.tick, bpm: startBpm });
+    }
+    return expandGradualTempoExpression(
+      entry.expression,
+      [...instantaneousTempoEvents, { tick: entry.tick, bpm: startBpm }],
+      nextBoundary?.tick ?? null
+    );
+  });
+
   const byTick = new Map<number, number>();
-  tempoEvents
+  gradualTempoEvents
+    .sort((left, right) => left.tick - right.tick)
+    .forEach((event) => {
+      byTick.set(event.tick, event.bpm);
+    });
+  restoredTempoEvents
+    .sort((left, right) => left.tick - right.tick)
+    .forEach((event) => {
+      byTick.set(event.tick, event.bpm);
+    });
+  instantaneousTempoEvents
     .sort((left, right) => left.tick - right.tick)
     .forEach((event) => {
       byTick.set(event.tick, event.bpm);
